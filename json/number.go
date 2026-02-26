@@ -11,9 +11,9 @@ const uint64MaxCutoff = 1844674407370955161
 type NumberType uint8
 
 const (
-	NumberInteger = NumberType(iota)
-	NumberReal
-	NumberBig
+	NumberTypeInteger = NumberType(iota)
+	NumberTypeReal
+	NumberTypeBig
 )
 
 type NumberValue struct {
@@ -75,7 +75,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return
 	}
 
@@ -84,7 +84,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	if negative {
 		r.pos++
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return
 		}
 	}
@@ -98,7 +98,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		r.pos++
 		if r.pos < len(r.data) {
 			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.setSyntaxError("invalid leading zero in number")
+				r.SetSyntaxError("invalid leading zero in number")
 				return
 			}
 		}
@@ -122,7 +122,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		}
 	} else {
 		if negative {
-			r.setSyntaxError("expected digit after minus sign in number")
+			r.SetSyntaxError("expected digit after minus sign in number")
 		}
 		return
 	}
@@ -132,12 +132,12 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		r.pos++
 
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return
 		}
 
 		if c := r.data[r.pos]; c < '0' || c > '9' {
-			r.setSyntaxError("expected digit after decimal point in number")
+			r.SetSyntaxError("expected digit after decimal point in number")
 			return
 		}
 
@@ -161,7 +161,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		r.pos++
 
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return
 		}
 
@@ -172,13 +172,13 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 			}
 			r.pos++
 			if r.pos >= len(r.data) {
-				r.setEofError()
+				r.SetEofError()
 				return
 			}
 		}
 
 		if c := r.data[r.pos]; c < '0' || c > '9' {
-			r.setSyntaxError("expected digit after exponent sign in number")
+			r.SetSyntaxError("expected digit after exponent sign in number")
 			return
 		}
 
@@ -206,7 +206,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	}
 
 	if big {
-		value.Type = NumberBig
+		value.Type = NumberTypeBig
 		return value, true
 	}
 
@@ -215,9 +215,9 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	value.Coefficient = coefficient
 
 	if value.Exponent < 0 {
-		value.Type = NumberReal
+		value.Type = NumberTypeReal
 	} else {
-		value.Type = NumberInteger
+		value.Type = NumberTypeInteger
 	}
 	return value, true
 }
@@ -228,7 +228,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return
 	}
 
@@ -237,7 +237,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 	if negative {
 		r.pos++
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return
 		}
 	}
@@ -247,7 +247,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 		r.pos++
 		if r.pos < len(r.data) {
 			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.setSyntaxError("invalid leading zero in number")
+				r.SetSyntaxError("invalid leading zero in number")
 				return
 			}
 		}
@@ -262,7 +262,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 		}
 	} else {
 		if negative {
-			r.setSyntaxError("expected digit after minus sign in number")
+			r.SetSyntaxError("expected digit after minus sign in number")
 		}
 		return
 	}
@@ -272,12 +272,12 @@ func (r *Reader) SkipNumber() (ok bool) {
 		r.pos++
 
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return
 		}
 
 		if c := r.data[r.pos]; c < '0' || c > '9' {
-			r.setSyntaxError("expected digit after decimal point in number")
+			r.SetSyntaxError("expected digit after decimal point in number")
 			return
 		}
 		r.pos++
@@ -295,20 +295,20 @@ func (r *Reader) SkipNumber() (ok bool) {
 		r.pos++
 
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return
 		}
 
 		if r.data[r.pos] == '+' || r.data[r.pos] == '-' {
 			r.pos++
 			if r.pos >= len(r.data) {
-				r.setEofError()
+				r.SetEofError()
 				return
 			}
 		}
 
 		if c := r.data[r.pos]; c < '0' || c > '9' {
-			r.setSyntaxError("expected digit after exponent sign in number")
+			r.SetSyntaxError("expected digit after exponent sign in number")
 			return
 		}
 		r.pos++

@@ -8,7 +8,15 @@ type Reader struct {
 	err  error
 }
 
-func (r *Reader) setEofError() {
+func NewReader(data []byte) *Reader {
+	return &Reader{data: data}
+}
+
+func (r *Reader) Error() error {
+	return r.err
+}
+
+func (r *Reader) SetEofError() {
 	if r.err != nil {
 		return
 	}
@@ -16,7 +24,7 @@ func (r *Reader) setEofError() {
 	r.err = ErrUnexpectedEOF
 }
 
-func (r *Reader) setSyntaxError(format string, args ...any) {
+func (r *Reader) SetSyntaxError(format string, args ...any) {
 	if r.err != nil {
 		return
 	}
@@ -45,7 +53,7 @@ func (r *Reader) consumeByte(expected byte) bool {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return false
 	}
 
@@ -54,4 +62,9 @@ func (r *Reader) consumeByte(expected byte) bool {
 		return true
 	}
 	return false
+}
+
+func (r *Reader) Skip() bool {
+	// TODO
+	return true
 }

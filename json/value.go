@@ -18,7 +18,7 @@ type Value struct {
 	Payload any
 }
 
-func (w *Writer) WriteValue(value Value) (ok bool) {
+func (w *Writer) WriteValue(value Value) (result bool) {
 	switch value.Type {
 	case ValueTypeNull:
 		w.WriteNull()
@@ -30,38 +30,38 @@ func (w *Writer) WriteValue(value Value) (ok bool) {
 		if number, ok := value.Payload.([]byte); ok {
 			w.WriteRawNumber(number)
 		} else {
-			w.setError("failed to cast number payload")
+			w.SetError("failed to cast number payload")
 			return
 		}
 	case ValueTypeString:
 		if str, ok := value.Payload.(string); ok {
 			w.WriteString(str)
 		} else {
-			w.setError("failed to cast string payload")
+			w.SetError("failed to cast string payload")
 			return
 		}
 	case ValueTypeArray:
 		if array, ok := value.Payload.([]Value); ok {
 			w.WriteArray(array)
 		} else {
-			w.setError("failed to cast array payload")
+			w.SetError("failed to cast array payload")
 			return
 		}
 	case ValueTypeObject:
 		if object, ok := value.Payload.(map[string]Value); ok {
 			w.WriteObject(object)
 		} else {
-			w.setError("failed to cast object payload")
+			w.SetError("failed to cast object payload")
 			return
 		}
 	default:
-		w.setError("invalid value type: %v", value.Type)
+		w.SetError("invalid value type: %v", value.Type)
 		return
 	}
 	return true
 }
 
-func (r *Reader) ReadValue() (value Value, ok bool) {
+func (r *Reader) ReadValue() (value Value, result bool) {
 	if r.err != nil {
 		return
 	}
@@ -69,7 +69,7 @@ func (r *Reader) ReadValue() (value Value, ok bool) {
 	r.SkipWhitespace()
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return
 	}
 

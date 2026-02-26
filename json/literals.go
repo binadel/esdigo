@@ -10,7 +10,7 @@ func (r *Reader) ReadNull() bool {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return false
 	}
 
@@ -26,12 +26,12 @@ func (r *Reader) ReadNull() bool {
 		for i := 1; i < 4; i++ {
 			if r.pos+i >= len(r.data) {
 				r.pos += i
-				r.setEofError()
+				r.SetEofError()
 				return false
 			}
 			if r.data[r.pos+i] != "null"[i] {
 				r.pos += i
-				r.setSyntaxError("expected literal 'null'")
+				r.SetSyntaxError("expected literal 'null'")
 				return false
 			}
 		}
@@ -54,7 +54,7 @@ func (r *Reader) ReadBoolean() (bool, bool) {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return false, false
 	}
 
@@ -72,12 +72,12 @@ func (r *Reader) ReadBoolean() (bool, bool) {
 		for i := 1; i < 4; i++ {
 			if r.pos+i >= len(r.data) {
 				r.pos += i
-				r.setEofError()
+				r.SetEofError()
 				return false, false
 			}
 			if r.data[r.pos+i] != "true"[i] {
 				r.pos += i
-				r.setSyntaxError("expected literal 'true'")
+				r.SetSyntaxError("expected literal 'true'")
 				return false, false
 			}
 		}
@@ -96,12 +96,12 @@ func (r *Reader) ReadBoolean() (bool, bool) {
 		for i := 1; i < 5; i++ {
 			if r.pos+i >= len(r.data) {
 				r.pos += i
-				r.setEofError()
+				r.SetEofError()
 				return false, false
 			}
 			if r.data[r.pos+i] != "false"[i] {
 				r.pos += i
-				r.setSyntaxError("expected literal 'false'")
+				r.SetSyntaxError("expected literal 'false'")
 				return false, false
 			}
 		}

@@ -48,7 +48,7 @@ func (r *Reader) ReadArray() ([]Value, bool) {
 			if value, ok := r.ReadValue(); ok {
 				array = append(array, value)
 			} else {
-				r.setSyntaxError("expected a value after begin-array '[' or value-separator ','")
+				r.SetSyntaxError("expected a value after begin-array '[' or value-separator ','")
 				return nil, false
 			}
 
@@ -57,7 +57,7 @@ func (r *Reader) ReadArray() ([]Value, bool) {
 			}
 
 			if !r.ValueSeparator() {
-				r.setSyntaxError("expected either end-array ']' or value-separator ','")
+				r.SetSyntaxError("expected either end-array ']' or value-separator ','")
 				return nil, false
 			}
 		}

@@ -7,12 +7,27 @@ type Writer struct {
 	err  error
 }
 
-func (w *Writer) setError(format string, args ...any) {
+func NewWriter() *Writer {
+	return &Writer{}
+}
+
+func (w *Writer) Error() error {
+	return w.err
+}
+
+func (w *Writer) SetError(format string, args ...any) {
 	if w.err != nil {
 		return
 	}
 
 	w.err = fmt.Errorf(format, args...)
+}
+
+func (w *Writer) Build() ([]byte, error) {
+	if w.err != nil {
+		return nil, w.err
+	}
+	return w.data, nil
 }
 
 func (w *Writer) WriteRawByte(value byte) {

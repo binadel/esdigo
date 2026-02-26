@@ -16,7 +16,7 @@ func (r *Reader) ReadRawString() ([]byte, bool) {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return nil, false
 	}
 
@@ -30,7 +30,7 @@ func (r *Reader) ReadRawString() ([]byte, bool) {
 	// fast path: scan for closing quote, backslash, or invalid control characters
 	for {
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return nil, false
 		}
 
@@ -50,7 +50,7 @@ func (r *Reader) ReadRawString() ([]byte, bool) {
 
 		if c < 0x20 {
 			// unescaped control characters are not permitted
-			r.setSyntaxError("invalid unescaped control character 0x%02x in string", c)
+			r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
 			return nil, false
 		}
 
@@ -71,7 +71,7 @@ func (r *Reader) SkipString() bool {
 	}
 
 	if r.pos >= len(r.data) {
-		r.setEofError()
+		r.SetEofError()
 		return false
 	}
 
@@ -92,7 +92,7 @@ func (r *Reader) SkipString() bool {
 			// escape character found, skip the backslash and the immediate next character
 			r.pos++
 			if r.pos >= len(r.data) {
-				r.setEofError()
+				r.SetEofError()
 				return false
 			}
 			r.pos++
@@ -101,7 +101,7 @@ func (r *Reader) SkipString() bool {
 
 		if c < 0x20 {
 			// unescaped control characters are not permitted
-			r.setSyntaxError("invalid unescaped control character 0x%02x in string", c)
+			r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
 			return false
 		}
 
@@ -109,7 +109,7 @@ func (r *Reader) SkipString() bool {
 	}
 
 	// if we exit the loop without returning, we hit EOF before a closing quote
-	r.setEofError()
+	r.SetEofError()
 	return false
 }
 
@@ -165,7 +165,7 @@ func (r *Reader) readEscapedString(start int) ([]byte, bool) {
 
 	for {
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return nil, false
 		}
 
@@ -179,7 +179,7 @@ func (r *Reader) readEscapedString(start int) ([]byte, bool) {
 
 		if c < 0x20 {
 			// unescaped control characters are not permitted
-			r.setSyntaxError("invalid unescaped control character 0x%02x in string", c)
+			r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
 			return nil, false
 		}
 
@@ -193,7 +193,7 @@ func (r *Reader) readEscapedString(start int) ([]byte, bool) {
 		// we hit a backslash
 		r.pos++
 		if r.pos >= len(r.data) {
-			r.setEofError()
+			r.SetEofError()
 			return nil, false
 		}
 
@@ -226,7 +226,7 @@ func (r *Reader) readEscapedString(start int) ([]byte, bool) {
 			// encode the rune back into utf-8 bytes in our buffer
 			buffer = utf8.AppendRune(buffer, u)
 		default:
-			r.setSyntaxError("invalid escape character '\\%c' in string", escapeChar)
+			r.SetSyntaxError("invalid escape character '\\%c' in string", escapeChar)
 			return nil, false
 		}
 	}
@@ -280,7 +280,7 @@ func (r *Reader) readUnicode() (rune, bool) {
 func (r *Reader) parseHex4() (rune, bool) {
 	if r.pos+4 > len(r.data) {
 		r.pos = len(r.data)
-		r.setEofError()
+		r.SetEofError()
 		return 0, false
 	}
 
@@ -296,7 +296,7 @@ func (r *Reader) parseHex4() (rune, bool) {
 		case c >= 'A' && c <= 'F':
 			val |= rune(c - 'A' + 10)
 		default:
-			r.setSyntaxError("invalid character '%c' in \\u hexadecimal escape", c)
+			r.SetSyntaxError("invalid character '%c' in \\u hexadecimal escape", c)
 			return 0, false
 		}
 		r.pos++
