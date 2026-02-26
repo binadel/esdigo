@@ -23,7 +23,7 @@ type NumberValue struct {
 	Coefficient uint64
 }
 
-func (w *Writer) WriteRawNumber(value string) {
+func (w *Writer) WriteRawNumber(value []byte) {
 	w.data = append(w.data, value...)
 }
 

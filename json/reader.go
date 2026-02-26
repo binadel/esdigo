@@ -38,3 +38,20 @@ func (r *Reader) SkipWhitespace() {
 		}
 	}
 }
+
+func (r *Reader) consumeByte(expected byte) bool {
+	if r.err != nil {
+		return false
+	}
+
+	if r.pos >= len(r.data) {
+		r.setEofError()
+		return false
+	}
+
+	if r.data[r.pos] == expected {
+		r.pos++
+		return true
+	}
+	return false
+}
