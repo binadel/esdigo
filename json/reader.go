@@ -27,3 +27,14 @@ func (r *Reader) setSyntaxError(format string, args ...any) {
 		Offset:  r.pos,
 	}
 }
+
+func (r *Reader) SkipWhitespace() {
+	for r.pos < len(r.data) {
+		c := r.data[r.pos]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			r.pos++
+		} else {
+			break
+		}
+	}
+}
