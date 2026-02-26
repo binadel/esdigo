@@ -10,7 +10,7 @@ func (w *Writer) WriteString(value string) {
 	w.data = append(w.data, '"')
 }
 
-func (r *Reader) ReadString() ([]byte, bool) {
+func (r *Reader) ReadRawString() ([]byte, bool) {
 	if r.err != nil {
 		return nil, false
 	}
@@ -56,6 +56,13 @@ func (r *Reader) ReadString() ([]byte, bool) {
 
 		r.pos++
 	}
+}
+
+func (r *Reader) ReadString() (string, bool) {
+	if raw, ok := r.ReadRawString(); ok {
+		return string(raw), true
+	}
+	return "", false
 }
 
 func (r *Reader) SkipString() bool {
