@@ -12,6 +12,10 @@ type Product struct {
 	IsPublished types.Boolean
 }
 
+func (p *Product) CreateValue() *Product {
+	return &Product{}
+}
+
 func (p *Product) MarshalJSON() ([]byte, error) {
 	w := json.NewWriter()
 	p.WriteJSON(w)

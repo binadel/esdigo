@@ -2,7 +2,7 @@ package types
 
 import "github.com/bindadel/esdigo/json"
 
-type Object[T ValueReadWriter] struct {
+type Object[T ValueReadWriter[T]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
@@ -54,6 +54,7 @@ func (o *Object[T]) ReadJSON(r *json.Reader) bool {
 
 	o.Defined = true
 
+	o.Value = o.Value.CreateValue()
 	if o.Value.ReadJSON(r) {
 		r.SkipWhitespace()
 		o.Valid = true
