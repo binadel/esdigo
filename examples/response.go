@@ -51,6 +51,8 @@ func (p *ProductResponse) ReadJSON(r *json.Reader) bool {
 					switch name {
 					case "product":
 						ok = p.Product.ReadJSON(r)
+					default:
+						ok = r.SkipValue()
 					}
 					if !ok {
 						return false
@@ -60,6 +62,8 @@ func (p *ProductResponse) ReadJSON(r *json.Reader) bool {
 					return false
 				}
 
+				r.SkipWhitespace()
+
 				if r.EndObject() {
 					return true
 				}
@@ -68,6 +72,8 @@ func (p *ProductResponse) ReadJSON(r *json.Reader) bool {
 					r.SetSyntaxError("expected either end-object '}' or value-separator ','")
 					return false
 				}
+
+				r.SkipWhitespace()
 			} else {
 				r.SetSyntaxError("expected a name after begin-object '{' or value-separator ','")
 				return false

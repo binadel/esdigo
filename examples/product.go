@@ -25,6 +25,10 @@ func (p *Product) UnmarshalJSON(data []byte) error {
 }
 
 func (p *Product) WriteJSON(w *json.Writer) bool {
+	if p == nil {
+		w.WriteNull()
+		return true
+	}
 	needsComma := false
 	w.BeginObject()
 	if p.Title.ShouldWrite() {
@@ -92,6 +96,8 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 						ok = p.Price.ReadJSON(r)
 					case "isPublished":
 						ok = p.IsPublished.ReadJSON(r)
+					default:
+						ok = r.SkipValue()
 					}
 					if !ok {
 						return false
@@ -101,6 +107,8 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 					return false
 				}
 
+				r.SkipWhitespace()
+
 				if r.EndObject() {
 					return true
 				}
@@ -109,6 +117,8 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 					r.SetSyntaxError("expected either end-object '}' or value-separator ','")
 					return false
 				}
+
+				r.SkipWhitespace()
 			} else {
 				r.SetSyntaxError("expected a name after begin-object '{' or value-separator ','")
 				return false

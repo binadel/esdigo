@@ -19,6 +19,10 @@ func (n *Number) Set(value json.NumberValue) {
 }
 
 func (n *Number) SetInt(value int64) {
+	coefficient := uint64(value)
+	if value < 0 {
+		coefficient = uint64(-value)
+	}
 	*n = Number{
 		Present: true,
 		Defined: true,
@@ -26,12 +30,9 @@ func (n *Number) SetInt(value int64) {
 		Value: json.NumberValue{
 			Negative:    value < 0,
 			Type:        json.NumberTypeInteger,
-			Coefficient: uint64(value),
+			Coefficient: coefficient,
 			Exponent:    0,
 		},
-	}
-	if value < 0 {
-		n.Value.Coefficient = uint64(-value)
 	}
 }
 

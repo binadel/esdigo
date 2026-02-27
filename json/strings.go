@@ -89,13 +89,25 @@ func (r *Reader) SkipString() bool {
 		}
 
 		if c == '\\' {
-			// escape character found, skip the backslash and the immediate next character
+			// escape character found
 			r.pos++
 			if r.pos >= len(r.data) {
 				r.SetEofError()
 				return false
 			}
-			r.pos++
+
+			switch r.data[r.pos] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				r.pos++
+			case 'u':
+				r.pos++
+				if !r.skipUnicode() {
+					return false
+				}
+			default:
+				r.SetSyntaxError("invalid escape character '\\%c' in string", r.data[r.pos])
+				return false
+			}
 			continue
 		}
 
@@ -274,6 +286,24 @@ func (r *Reader) readUnicode() (rune, bool) {
 	}
 
 	return h, true
+}
+
+func (r *Reader) skipUnicode() bool {
+	if r.pos+4 > len(r.data) {
+		r.pos = len(r.data)
+		r.SetEofError()
+		return false
+	}
+
+	for i := 0; i < 4; i++ {
+		if c := r.data[r.pos]; (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			r.SetSyntaxError("invalid character '%c' in \\u hexadecimal escape", c)
+			return false
+		}
+		r.pos++
+	}
+
+	return true
 }
 
 // parseHex4 reads exactly 4 hexadecimal characters and converts them to a rune.

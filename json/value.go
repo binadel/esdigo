@@ -122,6 +122,7 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 			return
 		}
 	default:
+		r.SetSyntaxError("unexpected character '%c'", c)
 		return
 	}
 
