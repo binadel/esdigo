@@ -113,7 +113,6 @@ func (r *Reader) SkipObject() bool {
 
 				if r.NameSeparator() {
 					if !r.SkipValue() {
-						r.SetSyntaxError("expected a value after name-separator ':'")
 						return false
 					}
 				} else {

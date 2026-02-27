@@ -76,7 +76,6 @@ func (r *Reader) SkipArray() bool {
 
 		for {
 			if !r.SkipValue() {
-				r.SetSyntaxError("expected a value after begin-array '[' or value-separator ','")
 				return false
 			}
 

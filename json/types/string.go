@@ -61,5 +61,5 @@ func (s *String) ReadJSON(r *json.Reader) bool {
 		return true
 	}
 
-	return false
+	return r.SkipValue()
 }

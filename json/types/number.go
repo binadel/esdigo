@@ -92,5 +92,5 @@ func (n *Number) ReadJSON(r *json.Reader) bool {
 		return true
 	}
 
-	return false
+	return r.SkipValue()
 }
