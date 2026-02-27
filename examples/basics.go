@@ -96,7 +96,7 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 						ok = p.IsPublished.ReadJSON(r)
 					}
 					if !ok {
-						if !r.Skip() {
+						if !r.SkipValue() {
 							r.SetSyntaxError("expected a value after name-separator ':'")
 							return false
 						}

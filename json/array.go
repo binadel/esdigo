@@ -65,3 +65,33 @@ func (r *Reader) ReadArray() ([]Value, bool) {
 
 	return nil, false
 }
+
+func (r *Reader) SkipArray() bool {
+	if r.BeginArray() {
+		r.SkipWhitespace()
+
+		if r.EndArray() {
+			return true
+		}
+
+		for {
+			if !r.SkipValue() {
+				r.SetSyntaxError("expected a value after begin-array '[' or value-separator ','")
+				return false
+			}
+
+			r.SkipWhitespace()
+
+			if r.EndArray() {
+				return true
+			}
+
+			if !r.ValueSeparator() {
+				r.SetSyntaxError("expected either end-array ']' or value-separator ','")
+				return false
+			}
+		}
+	}
+
+	return false
+}
