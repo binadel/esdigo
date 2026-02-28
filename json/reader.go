@@ -2,6 +2,21 @@ package json
 
 import "fmt"
 
+// Reader parses JSON from a byte slice. It maintains a position and an error;
+// once an error is set, all read methods return failure and no new error is set.
+//
+// ReadX contract (ReadNull, ReadString, ReadNumber, ReadBoolean, and structural
+// reads like BeginObject): each ReadX tries to read X. Exactly one of three
+// things happens:
+//  1. The value is as expected → return true (pos advanced).
+//  2. The value is not of the desired type at all (e.g. expected 'n' for null
+//     but got something else) → return false, do not set error, do not increment pos.
+//  3. The value starts with the expected character and pos is incremented, but
+//     later content is invalid (e.g. "nulx" for null) → set error and return false.
+//
+// So errors are only set in case 3: after committing to the token we discover
+// it is malformed. Callers can use case 2 to try another ReadX or report their
+// own error.
 type Reader struct {
 	data []byte
 	pos  int
@@ -103,7 +118,7 @@ func (r *Reader) SkipWhitespace() {
 	}
 }
 
-func (r *Reader) consumeByte(expected byte) bool {
+func (r *Reader) readByte(expected byte) bool {
 	if r.err != nil {
 		return false
 	}

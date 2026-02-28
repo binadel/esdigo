@@ -5,7 +5,7 @@ func (w *Writer) BeginArray() {
 }
 
 func (r *Reader) BeginArray() bool {
-	return r.consumeByte('[')
+	return r.readByte('[')
 }
 
 func (w *Writer) EndArray() {
@@ -13,7 +13,7 @@ func (w *Writer) EndArray() {
 }
 
 func (r *Reader) EndArray() bool {
-	return r.consumeByte(']')
+	return r.readByte(']')
 }
 
 func (w *Writer) WriteArray(value []Value) bool {

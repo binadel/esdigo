@@ -5,7 +5,7 @@ func (w *Writer) BeginObject() {
 }
 
 func (r *Reader) BeginObject() bool {
-	return r.consumeByte('{')
+	return r.readByte('{')
 }
 
 func (w *Writer) EndObject() {
@@ -13,7 +13,7 @@ func (w *Writer) EndObject() {
 }
 
 func (r *Reader) EndObject() bool {
-	return r.consumeByte('}')
+	return r.readByte('}')
 }
 
 func (w *Writer) NameSeparator() {
@@ -21,7 +21,7 @@ func (w *Writer) NameSeparator() {
 }
 
 func (r *Reader) NameSeparator() bool {
-	return r.consumeByte(':')
+	return r.readByte(':')
 }
 
 func (w *Writer) ValueSeparator() {
@@ -29,7 +29,7 @@ func (w *Writer) ValueSeparator() {
 }
 
 func (r *Reader) ValueSeparator() bool {
-	return r.consumeByte(',')
+	return r.readByte(',')
 }
 
 func (w *Writer) WriteObject(value map[string]Value) (ok bool) {
@@ -44,10 +44,6 @@ func (w *Writer) WriteObject(value map[string]Value) (ok bool) {
 		w.NameSeparator()
 		if !w.WriteValue(v) {
 			return false
-		}
-
-		switch v.Type {
-
 		}
 
 		needsComma = true
