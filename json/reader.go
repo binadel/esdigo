@@ -33,6 +33,7 @@ func (r *Reader) Error() error {
 	return r.err
 }
 
+// SetEofError sets EOF error if no other error is set.
 func (r *Reader) SetEofError() {
 	if r.err != nil {
 		return
