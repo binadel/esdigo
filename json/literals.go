@@ -11,20 +11,20 @@ func (r *Reader) ReadNull() bool {
 		return false
 	}
 
-	if r.pos >= len(r.data) {
+	remain := len(r.data) - r.pos
+	if remain < 1 {
 		r.SetEofError()
 		return false
 	}
 
-	if r.data[r.pos] == 'n' {
-		if r.pos+3 < len(r.data) &&
-			r.data[r.pos+1] == 'u' &&
-			r.data[r.pos+2] == 'l' &&
-			r.data[r.pos+3] == 'l' {
-			r.pos += 4
-			return true
-		}
+	// fast path: comparison
+	if remain >= 4 && string(r.data[r.pos:r.pos+4]) == "null" {
+		r.pos += 4
+		return true
+	}
 
+	// slow path: error reporting
+	if r.data[r.pos] == 'n' {
 		const literal = "null"
 		for i := 1; i < 4; i++ {
 			if r.pos+i >= len(r.data) {
@@ -58,7 +58,8 @@ func (r *Reader) ReadBoolean() (value bool, ok bool) {
 		return false, false
 	}
 
-	if r.pos >= len(r.data) {
+	remain := len(r.data) - r.pos
+	if remain < 1 {
 		r.SetEofError()
 		return false, false
 	}
@@ -66,14 +67,13 @@ func (r *Reader) ReadBoolean() (value bool, ok bool) {
 	c := r.data[r.pos]
 
 	if c == 't' {
-		if r.pos+3 < len(r.data) &&
-			r.data[r.pos+1] == 'r' &&
-			r.data[r.pos+2] == 'u' &&
-			r.data[r.pos+3] == 'e' {
+		// fast path: comparison
+		if remain >= 4 && string(r.data[r.pos:r.pos+4]) == "true" {
 			r.pos += 4
 			return true, true
 		}
 
+		// slow path: error reporting
 		const literal = "true"
 		for i := 1; i < 4; i++ {
 			if r.pos+i >= len(r.data) {
@@ -87,18 +87,14 @@ func (r *Reader) ReadBoolean() (value bool, ok bool) {
 				return false, false
 			}
 		}
-	}
-
-	if c == 'f' {
-		if r.pos+4 < len(r.data) &&
-			r.data[r.pos+1] == 'a' &&
-			r.data[r.pos+2] == 'l' &&
-			r.data[r.pos+3] == 's' &&
-			r.data[r.pos+4] == 'e' {
+	} else if c == 'f' {
+		// fast path: comparison
+		if remain >= 5 && string(r.data[r.pos:r.pos+5]) == "false" {
 			r.pos += 5
 			return false, true
 		}
 
+		// slow path: error reporting
 		const literal = "false"
 		for i := 1; i < 5; i++ {
 			if r.pos+i >= len(r.data) {
