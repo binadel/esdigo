@@ -23,37 +23,39 @@ type Reader struct {
 	err  error
 }
 
+// NewReader creates a new Reader over the provided byte slice.
+// The input slice is not copied.
 func NewReader(data []byte) *Reader {
 	return &Reader{
 		data: data,
 	}
 }
 
+// Error returns the first error encountered during parsing.
 func (r *Reader) Error() error {
 	return r.err
 }
 
-// SetEofError sets EOF error if no other error is set.
+// SetEofError sets an unexpected EOF error if no prior error exists.
 func (r *Reader) SetEofError() {
-	if r.err != nil {
-		return
+	if r.err == nil {
+		r.err = ErrUnexpectedEOF
 	}
-
-	r.err = ErrUnexpectedEOF
 }
 
+// SetSyntaxError records a syntax error at the current offset.
+// The error is only set if no prior error exists.
 func (r *Reader) SetSyntaxError(format string, args ...any) {
-	if r.err != nil {
-		return
-	}
-
-	msg := fmt.Sprintf(format, args...)
-	r.err = &SyntaxError{
-		Message: msg,
-		Offset:  r.pos,
+	if r.err == nil {
+		r.err = &SyntaxError{
+			Message: fmt.Sprintf(format, args...),
+			Offset:  r.pos,
+		}
 	}
 }
 
+// ReadJSON parses a complete JSON value and ensures no trailing
+// non-whitespace characters remain.
 func (r *Reader) ReadJSON() (Value, error) {
 	if r.err != nil {
 		return Value{}, r.err
@@ -61,64 +63,44 @@ func (r *Reader) ReadJSON() (Value, error) {
 
 	r.SkipWhitespace()
 
-	if value, ok := r.ReadValue(); ok {
-		if r.pos >= len(r.data) {
-			return value, nil
-		}
-		r.SetSyntaxError("unexpected trailing character '%c'", r.data[r.pos])
+	value, ok := r.ReadValue()
+	if !ok {
 		return Value{}, r.err
-	}
-
-	return Value{}, r.err
-}
-
-func (r *Reader) SkipValue() bool {
-	if r.err != nil {
-		return false
 	}
 
 	r.SkipWhitespace()
 
-	if r.pos >= len(r.data) {
-		r.SetEofError()
-		return false
+	if r.pos != len(r.data) {
+		r.SetSyntaxError("unexpected trailing character '%c'", r.data[r.pos])
+		return Value{}, r.err
 	}
 
-	c := r.data[r.pos]
-	switch c {
-	case '{':
-		return r.SkipObject()
-	case '[':
-		return r.SkipArray()
-	case '"':
-		return r.SkipString()
-	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		return r.SkipNumber()
-	case 't':
-		b, ok := r.ReadBoolean()
-		return ok && b
-	case 'f':
-		b, ok := r.ReadBoolean()
-		return ok && !b
-	case 'n':
-		return r.ReadNull()
-	default:
-		r.SetSyntaxError("unexpected character '%c'", c)
-		return false
-	}
+	return value, nil
 }
 
+// SkipWhitespace advances past JSON whitespace characters.
+// This is a hot-path function and avoids unnecessary bounds checks.
 func (r *Reader) SkipWhitespace() {
-	for r.pos < len(r.data) {
-		c := r.data[r.pos]
-		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			r.pos++
-		} else {
+	data := r.data
+	pos := r.pos
+
+	if pos < len(data) && data[pos] > ' ' {
+		return
+	}
+
+	for pos < len(data) {
+		c := data[pos]
+		if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
 			break
 		}
+		pos++
 	}
+
+	r.pos = pos
 }
 
+// readByte consumes the next byte if it matches expected.
+// Returns true if matched and consumed.
 func (r *Reader) readByte(expected byte) bool {
 	if r.err != nil {
 		return false
@@ -129,9 +111,10 @@ func (r *Reader) readByte(expected byte) bool {
 		return false
 	}
 
-	if r.data[r.pos] == expected {
-		r.pos++
-		return true
+	if r.data[r.pos] != expected {
+		return false
 	}
-	return false
+
+	r.pos++
+	return true
 }

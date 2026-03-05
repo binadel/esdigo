@@ -3,8 +3,7 @@ package json
 type ValueType int
 
 const (
-	ValueTypeInvalid ValueType = iota
-	ValueTypeNull
+	ValueTypeNull ValueType = iota
 	ValueTypeFalse
 	ValueTypeTrue
 	ValueTypeNumber
@@ -13,11 +12,14 @@ const (
 	ValueTypeObject
 )
 
+// Value represents a JSON value that holds the type and payload.
 type Value struct {
 	Type    ValueType
 	Payload any
 }
 
+// WriteValue writes the next JSON value.
+// Writes the value and returns true if a value was successfully written.
 func (w *Writer) WriteValue(value Value) (result bool) {
 	switch value.Type {
 	case ValueTypeNull:
@@ -30,37 +32,34 @@ func (w *Writer) WriteValue(value Value) (result bool) {
 		if number, ok := value.Payload.([]byte); ok {
 			w.WriteRawNumber(number)
 		} else {
-			w.SetError("failed to cast number payload")
 			return
 		}
 	case ValueTypeString:
 		if str, ok := value.Payload.(string); ok {
 			w.WriteString(str)
 		} else {
-			w.SetError("failed to cast string payload")
 			return
 		}
 	case ValueTypeArray:
 		if array, ok := value.Payload.([]Value); ok {
 			w.WriteArray(array)
 		} else {
-			w.SetError("failed to cast array payload")
 			return
 		}
 	case ValueTypeObject:
 		if object, ok := value.Payload.(map[string]Value); ok {
 			w.WriteObject(object)
 		} else {
-			w.SetError("failed to cast object payload")
 			return
 		}
 	default:
-		w.SetError("invalid value type: %v", value.Type)
 		return
 	}
 	return true
 }
 
+// ReadValue reads the next JSON value.
+// Returns the value and true if a value was successfully read.
 func (r *Reader) ReadValue() (value Value, result bool) {
 	if r.err != nil {
 		return
@@ -96,28 +95,26 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 		} else {
 			return
 		}
+	case 'n':
+		if r.ReadNull() {
+			value.Type = ValueTypeNull
+		} else {
+			return
+		}
+	case 't', 'f':
+		if b, ok := r.ReadBoolean(); ok {
+			if b {
+				value.Type = ValueTypeTrue
+			} else {
+				value.Type = ValueTypeFalse
+			}
+		} else {
+			return
+		}
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		if payload, ok := r.ReadNumber(); ok {
 			value.Type = ValueTypeNumber
 			value.Payload = payload
-		} else {
-			return
-		}
-	case 't':
-		if _, ok := r.ReadBoolean(); ok {
-			value.Type = ValueTypeTrue
-		} else {
-			return
-		}
-	case 'f':
-		if _, ok := r.ReadBoolean(); ok {
-			value.Type = ValueTypeFalse
-		} else {
-			return
-		}
-	case 'n':
-		if r.ReadNull() {
-			value.Type = ValueTypeNull
 		} else {
 			return
 		}
@@ -129,4 +126,39 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 	r.SkipWhitespace()
 
 	return value, true
+}
+
+// SkipValue skips over the next JSON value without constructing it.
+// Returns true if a value was successfully skipped.
+func (r *Reader) SkipValue() bool {
+	if r.err != nil {
+		return false
+	}
+
+	r.SkipWhitespace()
+
+	if r.pos >= len(r.data) {
+		r.SetEofError()
+		return false
+	}
+
+	c := r.data[r.pos]
+	switch c {
+	case '{':
+		return r.SkipObject()
+	case '[':
+		return r.SkipArray()
+	case '"':
+		return r.SkipString()
+	case 'n':
+		return r.ReadNull()
+	case 't', 'f':
+		_, ok := r.ReadBoolean()
+		return ok
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return r.SkipNumber()
+	default:
+		r.SetSyntaxError("unexpected character '%c'", c)
+		return false
+	}
 }
