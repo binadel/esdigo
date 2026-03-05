@@ -1,37 +1,46 @@
 package json
 
+// BeginObject writes the JSON begin-object token '{' to the writer buffer.
 func (w *Writer) BeginObject() {
 	w.data = append(w.data, '{')
 }
 
+// BeginObject attempts to read the JSON begin-object token '{'.
 func (r *Reader) BeginObject() bool {
 	return r.readByte('{')
 }
 
+// EndObject writes the JSON end-object token '}' to the writer buffer.
 func (w *Writer) EndObject() {
 	w.data = append(w.data, '}')
 }
 
+// EndObject attempts to read the JSON end-object token '}'.
 func (r *Reader) EndObject() bool {
 	return r.readByte('}')
 }
 
+// NameSeparator writes the JSON name/value separator ':'.
 func (w *Writer) NameSeparator() {
 	w.data = append(w.data, ':')
 }
 
+// NameSeparator attempts to read the JSON name/value separator ':'.
 func (r *Reader) NameSeparator() bool {
 	return r.readByte(':')
 }
 
+// ValueSeparator writes the JSON value separator ','.
 func (w *Writer) ValueSeparator() {
 	w.data = append(w.data, ',')
 }
 
+// ValueSeparator attempts to read the JSON value separator ','.
 func (r *Reader) ValueSeparator() bool {
 	return r.readByte(',')
 }
 
+// WriteObject serializes a map[string]Value as a JSON object.
 func (w *Writer) WriteObject(value map[string]Value) (ok bool) {
 	w.BeginObject()
 	needsComma := false
@@ -52,6 +61,7 @@ func (w *Writer) WriteObject(value map[string]Value) (ok bool) {
 	return true
 }
 
+// ReadObject parses a JSON object and returns its members as a map[string]Value.
 func (r *Reader) ReadObject() (map[string]Value, bool) {
 	if r.BeginObject() {
 		r.SkipWhitespace()
@@ -95,6 +105,7 @@ func (r *Reader) ReadObject() (map[string]Value, bool) {
 	return nil, false
 }
 
+// SkipObject skips a JSON object without constructing Value objects.
 func (r *Reader) SkipObject() bool {
 	if r.BeginObject() {
 		r.SkipWhitespace()

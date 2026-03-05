@@ -1,21 +1,26 @@
 package json
 
+// BeginArray writes the JSON begin-array token '[' to the writer buffer.
 func (w *Writer) BeginArray() {
 	w.data = append(w.data, '[')
 }
 
+// BeginArray attempts to read the JSON begin-array token '['.
 func (r *Reader) BeginArray() bool {
 	return r.readByte('[')
 }
 
+// EndArray writes the JSON end-array token ']' to the writer buffer.
 func (w *Writer) EndArray() {
 	w.data = append(w.data, ']')
 }
 
+// EndArray attempts to read the JSON end-array token ']'.
 func (r *Reader) EndArray() bool {
 	return r.readByte(']')
 }
 
+// WriteArray serializes a slice of Value as a JSON array.
 func (w *Writer) WriteArray(value []Value) bool {
 	w.BeginArray()
 	needsComma := false
@@ -34,6 +39,7 @@ func (w *Writer) WriteArray(value []Value) bool {
 	return true
 }
 
+// ReadArray parses a JSON array and returns its elements as a slice of Value.
 func (r *Reader) ReadArray() ([]Value, bool) {
 	if r.BeginArray() {
 		r.SkipWhitespace()
@@ -66,6 +72,7 @@ func (r *Reader) ReadArray() ([]Value, bool) {
 	return nil, false
 }
 
+// SkipArray skips a JSON array without allocating or constructing Value
 func (r *Reader) SkipArray() bool {
 	if r.BeginArray() {
 		r.SkipWhitespace()
