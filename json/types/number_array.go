@@ -75,7 +75,7 @@ func (a *NumberArray) WriteJSON(w *json.Writer) bool {
 				if needsComma {
 					w.ValueSeparator()
 				}
-				w.WriteNumber(v.Negative, v.Coefficient, 0, int64(v.Exponent))
+				w.WriteNumber(v)
 				needsComma = true
 			}
 			w.EndArray()

@@ -63,7 +63,7 @@ func (n *Number) ShouldWrite() bool {
 func (n *Number) WriteJSON(w *json.Writer) bool {
 	if n.Defined {
 		if n.Valid {
-			w.WriteNumber(n.Value.Negative, n.Value.Coefficient, 0, int64(n.Value.Exponent))
+			w.WriteNumber(n.Value)
 		} else {
 			return false
 		}

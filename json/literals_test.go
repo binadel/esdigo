@@ -10,7 +10,7 @@ import (
 // ========================
 
 func TestWriter_WriteNull(t *testing.T) {
-	w := NewWriter()
+	w := NewWriter(2)
 
 	w.WriteNull()
 
@@ -20,7 +20,7 @@ func TestWriter_WriteNull(t *testing.T) {
 }
 
 func TestWriter_WriteNull_Append(t *testing.T) {
-	w := NewWriter()
+	w := NewWriter(2)
 	w.data = append(w.data, `"name":`...)
 
 	w.WriteNull()
@@ -105,7 +105,7 @@ func TestReader_ReadNull_PreExistingError(t *testing.T) {
 // ========================
 
 func TestWriter_WriteBoolean_True(t *testing.T) {
-	w := NewWriter()
+	w := NewWriter(2)
 
 	w.WriteBoolean(true)
 
@@ -115,7 +115,7 @@ func TestWriter_WriteBoolean_True(t *testing.T) {
 }
 
 func TestWriter_WriteBoolean_False(t *testing.T) {
-	w := NewWriter()
+	w := NewWriter(2)
 
 	w.WriteBoolean(false)
 

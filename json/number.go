@@ -27,21 +27,16 @@ func (w *Writer) WriteRawNumber(value []byte) {
 	w.data = append(w.data, value...)
 }
 
-func (w *Writer) WriteNumber(negative bool, integer uint64, fraction uint64, exponent int64) {
-	if negative {
+func (w *Writer) WriteNumber(value NumberValue) {
+	if value.Negative {
 		w.data = append(w.data, '-')
 	}
 
-	w.data = strconv.AppendUint(w.data, integer, 10)
+	w.data = strconv.AppendUint(w.data, value.Coefficient, 10)
 
-	if fraction != 0 {
-		w.data = append(w.data, '.')
-		w.data = strconv.AppendUint(w.data, fraction, 10)
-	}
-
-	if exponent != 0 {
+	if value.Exponent != 0 {
 		w.data = append(w.data, 'e')
-		w.data = strconv.AppendInt(w.data, exponent, 10)
+		w.data = strconv.AppendInt(w.data, int64(value.Exponent), 10)
 	}
 }
 
@@ -80,8 +75,8 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	}
 
 	// minus sign
-	negative := r.data[r.pos] == '-'
-	if negative {
+	value.Negative = r.data[r.pos] == '-'
+	if value.Negative {
 		r.pos++
 		if r.pos >= len(r.data) {
 			r.SetEofError()
@@ -90,7 +85,8 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	}
 
 	var coefficient uint64
-	var exponent int32
+	var exponent int
+	var trailingZeros int
 	var big bool
 
 	// integer part
@@ -110,6 +106,11 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 			if digit := uint64(r.data[r.pos] - '0'); digit <= 9 {
 				if coefficient < uint64MaxCutoff || (digit < 6 && coefficient == uint64MaxCutoff) {
 					coefficient = coefficient*10 + digit
+					if digit == 0 {
+						trailingZeros++
+					} else {
+						trailingZeros = 0
+					}
 				} else if digit == 0 {
 					exponent++
 				} else {
@@ -121,7 +122,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 			}
 		}
 	} else {
-		if negative {
+		if value.Negative {
 			r.SetSyntaxError("expected digit after minus sign in number")
 		}
 		return
@@ -146,7 +147,14 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 				if coefficient < uint64MaxCutoff || (digit < 6 && coefficient == uint64MaxCutoff) {
 					coefficient = coefficient*10 + digit
 					exponent--
-				} else {
+					if digit == 0 {
+						if coefficient != 0 {
+							trailingZeros++
+						}
+					} else {
+						trailingZeros = 0
+					}
+				} else if digit != 0 {
 					big = true
 				}
 				r.pos++
@@ -185,7 +193,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		var exp uint64
 		for r.pos < len(r.data) {
 			if digit := uint64(r.data[r.pos] - '0'); digit <= 9 {
-				if exp < 3300 {
+				if exp < 21474836 {
 					exp = exp*10 + digit
 				}
 				r.pos++
@@ -195,9 +203,9 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		}
 
 		if negExp {
-			exponent -= int32(exp)
+			exponent -= int(exp)
 		} else {
-			exponent += int32(exp)
+			exponent += int(exp)
 		}
 	}
 
@@ -210,15 +218,20 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		return value, true
 	}
 
-	value.Negative = negative
 	value.Exponent = int16(exponent)
 	value.Coefficient = coefficient
 
-	if value.Exponent < 0 {
-		value.Type = NumberTypeReal
-	} else {
+	if coefficient == 0 {
 		value.Type = NumberTypeInteger
+	} else if trailingZeros >= -exponent {
+		value.Type = NumberTypeInteger
+	} else {
+		value.Type = NumberTypeReal
 	}
+
+	value.Exponent = int16(exponent)
+	value.Coefficient = coefficient
+
 	return value, true
 }
 
@@ -270,7 +283,6 @@ func (r *Reader) SkipNumber() (ok bool) {
 	// fractional part
 	if r.pos < len(r.data) && r.data[r.pos] == '.' {
 		r.pos++
-
 		if r.pos >= len(r.data) {
 			r.SetEofError()
 			return
@@ -293,7 +305,6 @@ func (r *Reader) SkipNumber() (ok bool) {
 	// exponent part
 	if r.pos < len(r.data) && (r.data[r.pos] == 'e' || r.data[r.pos] == 'E') {
 		r.pos++
-
 		if r.pos >= len(r.data) {
 			r.SetEofError()
 			return
