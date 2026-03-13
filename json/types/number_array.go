@@ -9,15 +9,15 @@ type NumberArray struct {
 	Value   []json.NumberValue
 }
 
-func (a *NumberArray) IsPresent() bool {
+func (a NumberArray) IsPresent() bool {
 	return a.Present
 }
 
-func (a *NumberArray) IsDefined() bool {
+func (a NumberArray) IsDefined() bool {
 	return a.Defined
 }
 
-func (a *NumberArray) IsValid() bool {
+func (a NumberArray) IsValid() bool {
 	return a.Valid
 }
 
@@ -74,7 +74,7 @@ func (a *NumberArray) SetNull() {
 	}
 }
 
-func (a *NumberArray) WriteJSON(w *json.Writer) bool {
+func (a NumberArray) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
 			needsComma := false

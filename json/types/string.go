@@ -9,15 +9,15 @@ type String struct {
 	Value   string
 }
 
-func (s *String) IsPresent() bool {
+func (s String) IsPresent() bool {
 	return s.Present
 }
 
-func (s *String) IsDefined() bool {
+func (s String) IsDefined() bool {
 	return s.Defined
 }
 
-func (s *String) IsValid() bool {
+func (s String) IsValid() bool {
 	return s.Valid
 }
 
@@ -36,7 +36,7 @@ func (s *String) SetNull() {
 	}
 }
 
-func (s *String) WriteJSON(w *json.Writer) bool {
+func (s String) WriteJSON(w *json.Writer) bool {
 	if s.Defined {
 		if s.Valid {
 			w.WriteString(s.Value)

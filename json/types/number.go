@@ -9,15 +9,15 @@ type Number struct {
 	Value   json.NumberValue
 }
 
-func (n *Number) IsPresent() bool {
+func (n Number) IsPresent() bool {
 	return n.Present
 }
 
-func (n *Number) IsDefined() bool {
+func (n Number) IsDefined() bool {
 	return n.Defined
 }
 
-func (n *Number) IsValid() bool {
+func (n Number) IsValid() bool {
 	return n.Valid
 }
 
@@ -68,7 +68,7 @@ func (n *Number) SetNull() {
 	}
 }
 
-func (n *Number) WriteJSON(w *json.Writer) bool {
+func (n Number) WriteJSON(w *json.Writer) bool {
 	if n.Defined {
 		if n.Valid {
 			w.WriteNumber(n.Value)

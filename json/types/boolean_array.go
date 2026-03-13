@@ -9,15 +9,15 @@ type BooleanArray struct {
 	Value   []bool
 }
 
-func (a *BooleanArray) IsPresent() bool {
+func (a BooleanArray) IsPresent() bool {
 	return a.Present
 }
 
-func (a *BooleanArray) IsDefined() bool {
+func (a BooleanArray) IsDefined() bool {
 	return a.Defined
 }
 
-func (a *BooleanArray) IsValid() bool {
+func (a BooleanArray) IsValid() bool {
 	return a.Valid
 }
 
@@ -36,7 +36,7 @@ func (a *BooleanArray) SetNull() {
 	}
 }
 
-func (a *BooleanArray) WriteJSON(w *json.Writer) bool {
+func (a BooleanArray) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
 			needsComma := false

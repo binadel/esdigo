@@ -9,15 +9,15 @@ type Object[T json.ValueReadWriter[T]] struct {
 	Value   T
 }
 
-func (o *Object[T]) IsPresent() bool {
+func (o Object[T]) IsPresent() bool {
 	return o.Present
 }
 
-func (o *Object[T]) IsDefined() bool {
+func (o Object[T]) IsDefined() bool {
 	return o.Defined
 }
 
-func (o *Object[T]) IsValid() bool {
+func (o Object[T]) IsValid() bool {
 	return o.Valid
 }
 
@@ -36,7 +36,7 @@ func (o *Object[T]) SetNull() {
 	}
 }
 
-func (o *Object[T]) WriteJSON(w *json.Writer) bool {
+func (o Object[T]) WriteJSON(w *json.Writer) bool {
 	if o.Defined {
 		if o.Valid {
 			o.Value.WriteJSON(w)

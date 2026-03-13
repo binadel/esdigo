@@ -9,15 +9,15 @@ type Array[T json.ValueReadWriter[T]] struct {
 	Value   []T
 }
 
-func (a *Array[T]) IsPresent() bool {
+func (a Array[T]) IsPresent() bool {
 	return a.Present
 }
 
-func (a *Array[T]) IsDefined() bool {
+func (a Array[T]) IsDefined() bool {
 	return a.Defined
 }
 
-func (a *Array[T]) IsValid() bool {
+func (a Array[T]) IsValid() bool {
 	return a.Valid
 }
 
@@ -36,7 +36,7 @@ func (a *Array[T]) SetNull() {
 	}
 }
 
-func (a *Array[T]) WriteJSON(w *json.Writer) bool {
+func (a Array[T]) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
 			needsComma := false
