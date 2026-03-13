@@ -1,21 +1,21 @@
-package types
+package json
 
-import "github.com/bindadel/esdigo/json"
+type OptionalValue interface {
+	IsPresent() bool
+	IsDefined() bool
+	IsValid() bool
+}
 
 type ValueFactory[T any] interface {
 	CreateValue() T
 }
 
-type OmittableValue interface {
-	ShouldWrite() bool
-}
-
 type ValueWriter interface {
-	WriteJSON(w *json.Writer) bool
+	WriteJSON(w *Writer) bool
 }
 
 type ValueReader interface {
-	ReadJSON(r *json.Reader) bool
+	ReadJSON(r *Reader) bool
 }
 
 type ValueReadWriter[T any] interface {

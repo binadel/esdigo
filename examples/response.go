@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/bindadel/esdigo/json"
-	"github.com/bindadel/esdigo/json/types"
+	"github.com/binadel/esdigo/json"
+	"github.com/binadel/esdigo/json/types"
 )
 
 type ProductResponse struct {
@@ -10,7 +10,7 @@ type ProductResponse struct {
 }
 
 func (p *ProductResponse) MarshalJSON() ([]byte, error) {
-	w := json.NewWriter()
+	w := json.NewWriter(128)
 	p.WriteJSON(w)
 	return w.Build()
 }
@@ -23,7 +23,7 @@ func (p *ProductResponse) UnmarshalJSON(data []byte) error {
 
 func (p *ProductResponse) WriteJSON(w *json.Writer) bool {
 	w.BeginObject()
-	if p.Product.ShouldWrite() {
+	if p.Product.IsPresent() {
 		w.WriteRawString(`"product":`)
 		if !p.Product.WriteJSON(w) {
 			return false

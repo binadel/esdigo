@@ -1,12 +1,24 @@
 package types
 
-import "github.com/bindadel/esdigo/json"
+import "github.com/binadel/esdigo/json"
 
 type String struct {
 	Present bool
 	Defined bool
 	Valid   bool
 	Value   string
+}
+
+func (s *String) IsPresent() bool {
+	return s.Present
+}
+
+func (s *String) IsDefined() bool {
+	return s.Defined
+}
+
+func (s *String) IsValid() bool {
+	return s.Valid
 }
 
 func (s *String) Set(value string) {
@@ -22,10 +34,6 @@ func (s *String) SetNull() {
 	*s = String{
 		Present: true,
 	}
-}
-
-func (s *String) ShouldWrite() bool {
-	return s.Present
 }
 
 func (s *String) WriteJSON(w *json.Writer) bool {

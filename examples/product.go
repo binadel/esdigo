@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/bindadel/esdigo/json"
-	"github.com/bindadel/esdigo/json/types"
+	"github.com/binadel/esdigo/json"
+	"github.com/binadel/esdigo/json/types"
 )
 
 type Product struct {
@@ -17,7 +17,7 @@ func (p *Product) CreateValue() *Product {
 }
 
 func (p *Product) MarshalJSON() ([]byte, error) {
-	w := json.NewWriter()
+	w := json.NewWriter(128)
 	p.WriteJSON(w)
 	return w.Build()
 }
@@ -35,14 +35,14 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 	}
 	needsComma := false
 	w.BeginObject()
-	if p.Title.ShouldWrite() {
+	if p.Title.IsPresent() {
 		w.WriteRawString(`"title":`)
 		if !p.Title.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
 	}
-	if p.Description.ShouldWrite() {
+	if p.Description.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
@@ -52,7 +52,7 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
-	if p.Price.ShouldWrite() {
+	if p.Price.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
@@ -62,7 +62,7 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
-	if p.IsPublished.ShouldWrite() {
+	if p.IsPublished.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}

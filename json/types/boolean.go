@@ -1,12 +1,24 @@
 package types
 
-import "github.com/bindadel/esdigo/json"
+import "github.com/binadel/esdigo/json"
 
 type Boolean struct {
 	Present bool
 	Defined bool
 	Valid   bool
 	Value   bool
+}
+
+func (b *Boolean) IsPresent() bool {
+	return b.Present
+}
+
+func (b *Boolean) IsDefined() bool {
+	return b.Defined
+}
+
+func (b *Boolean) IsValid() bool {
+	return b.Valid
 }
 
 func (b *Boolean) Set(value bool) {
@@ -22,10 +34,6 @@ func (b *Boolean) SetNull() {
 	*b = Boolean{
 		Present: true,
 	}
-}
-
-func (b *Boolean) ShouldWrite() bool {
-	return b.Present
 }
 
 func (b *Boolean) WriteJSON(w *json.Writer) bool {

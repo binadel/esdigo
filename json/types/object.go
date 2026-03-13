@@ -1,12 +1,24 @@
 package types
 
-import "github.com/bindadel/esdigo/json"
+import "github.com/binadel/esdigo/json"
 
-type Object[T ValueReadWriter[T]] struct {
+type Object[T json.ValueReadWriter[T]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
 	Value   T
+}
+
+func (o *Object[T]) IsPresent() bool {
+	return o.Present
+}
+
+func (o *Object[T]) IsDefined() bool {
+	return o.Defined
+}
+
+func (o *Object[T]) IsValid() bool {
+	return o.Valid
 }
 
 func (o *Object[T]) Set(value T) {
@@ -22,10 +34,6 @@ func (o *Object[T]) SetNull() {
 	*o = Object[T]{
 		Present: true,
 	}
-}
-
-func (o *Object[T]) ShouldWrite() bool {
-	return o.Present
 }
 
 func (o *Object[T]) WriteJSON(w *json.Writer) bool {
