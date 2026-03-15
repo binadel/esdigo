@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/json/types"
+	"github.com/binadel/esdigo/validation"
 )
 
 type Product struct {
@@ -38,16 +39,6 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 	if p.Title.IsPresent() {
 		w.WriteRawString(`"title":`)
 		if !p.Title.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
-	if p.Description.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString(`"description":`)
-		if !p.Description.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -130,4 +121,26 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 		}
 	}
 	return false
+}
+
+type ValidatedProduct struct {
+	Title       validation.Result[types.String]
+	IsPublished validation.Result[types.Boolean]
+}
+
+type ProductValidator struct {
+	Title       *validation.String
+	IsPublished *validation.Boolean
+}
+
+func NewProductValidator() *ProductValidator {
+	return &ProductValidator{
+		IsPublished: validation.NewBoolean("isPublished").Required().NotNull(),
+	}
+}
+
+func (v *ProductValidator) Validate(p *Product) *ValidatedProduct {
+	return &ValidatedProduct{
+		IsPublished: v.IsPublished.Validate(p.IsPublished),
+	}
 }

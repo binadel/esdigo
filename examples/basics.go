@@ -1,27 +1,46 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/binadel/esdigo/json"
+)
 
 func main() {
+	//p := &Product{}
+	//p.Title.Set("MacBook Air M5")
+	//p.Price.SetNull()
+	//p.IsPublished.Set(true)
+	//
+	//r := &ProductResponse{}
+	//r.Product.Set(p)
+	//
+	//data, err := r.MarshalJSON()
+	//if err != nil {
+	//	fmt.Println(err)
+	//} else {
+	//	fmt.Println(string(data))
+	//}
+	//
+	//r1 := &ProductResponse{}
+	//err = r1.UnmarshalJSON(data)
+	//if err != nil {
+	//	fmt.Println(err)
+	//}
+	//fmt.Println(r1.Product.Value)
+
+	js := `{"title": "ps5", "isPublished": false}`
 	p := &Product{}
-	p.Title.Set("MacBook Air M5")
-	p.Price.SetNull()
-	p.IsPublished.Set(true)
-
-	r := &ProductResponse{}
-	r.Product.Set(p)
-
-	data, err := r.MarshalJSON()
+	err := p.UnmarshalJSON([]byte(js))
 	if err != nil {
 		fmt.Println(err)
-	} else {
-		fmt.Println(string(data))
+		return
 	}
 
-	r1 := &ProductResponse{}
-	err = r1.UnmarshalJSON(data)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println(r1.Product.Value)
+	validator := NewProductValidator()
+	validated := validator.Validate(p)
+
+	w := json.NewWriter(128)
+	validated.IsPublished.WriteJSON(w)
+	fmt.Println(string(w.Bytes()))
 }

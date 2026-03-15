@@ -9,16 +9,22 @@ type Boolean struct {
 	Value   bool
 }
 
-func (b Boolean) IsPresent() bool {
+func (b *Boolean) IsPresent() bool {
 	return b.Present
 }
 
-func (b Boolean) IsDefined() bool {
+func (b *Boolean) IsDefined() bool {
 	return b.Defined
 }
 
-func (b Boolean) IsValid() bool {
+func (b *Boolean) IsValid() bool {
 	return b.Valid
+}
+
+func (b *Boolean) SetNull() {
+	*b = Boolean{
+		Present: true,
+	}
 }
 
 func (b *Boolean) Set(value bool) {
@@ -30,13 +36,7 @@ func (b *Boolean) Set(value bool) {
 	}
 }
 
-func (b *Boolean) SetNull() {
-	*b = Boolean{
-		Present: true,
-	}
-}
-
-func (b Boolean) WriteJSON(w *json.Writer) bool {
+func (b *Boolean) WriteJSON(w *json.Writer) bool {
 	if b.Defined {
 		if b.Valid {
 			w.WriteBoolean(b.Value)
