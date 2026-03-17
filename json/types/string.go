@@ -6,28 +6,19 @@ type String struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   string
+	Value   []byte
 }
 
-func (s String) IsPresent() bool {
+func (s *String) IsPresent() bool {
 	return s.Present
 }
 
-func (s String) IsDefined() bool {
+func (s *String) IsDefined() bool {
 	return s.Defined
 }
 
-func (s String) IsValid() bool {
+func (s *String) IsValid() bool {
 	return s.Valid
-}
-
-func (s *String) Set(value string) {
-	*s = String{
-		Present: true,
-		Defined: true,
-		Valid:   true,
-		Value:   value,
-	}
 }
 
 func (s *String) SetNull() {
@@ -36,10 +27,28 @@ func (s *String) SetNull() {
 	}
 }
 
-func (s String) WriteJSON(w *json.Writer) bool {
+func (s *String) Set(value []byte) {
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   value,
+	}
+}
+
+func (s *String) SetString(value string) {
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   json.StrToBytes(value),
+	}
+}
+
+func (s *String) WriteJSON(w *json.Writer) bool {
 	if s.Defined {
 		if s.Valid {
-			w.WriteString(s.Value)
+			w.WriteStringBytes(s.Value)
 		} else {
 			return false
 		}
@@ -62,7 +71,7 @@ func (s *String) ReadJSON(r *json.Reader) bool {
 
 	s.Defined = true
 
-	if value, ok := r.ReadString(); ok {
+	if value, ok := r.ReadStringBytes(); ok {
 		r.SkipWhitespace()
 		s.Valid = true
 		s.Value = value

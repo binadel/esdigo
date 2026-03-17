@@ -1,16 +1,33 @@
 package json
 
-import "unicode/utf8"
+import (
+	"unicode/utf8"
+	"unsafe"
+)
 
 const hex = "0123456789abcdef"
 
 func (w *Writer) WriteString(value string) {
+	bytes := StrToBytes(value)
+	w.data = append(w.data, '"')
+	w.writeEscapedString(bytes)
+	w.data = append(w.data, '"')
+}
+
+func (w *Writer) WriteStringBytes(value []byte) {
 	w.data = append(w.data, '"')
 	w.writeEscapedString(value)
 	w.data = append(w.data, '"')
 }
 
-func (r *Reader) ReadRawString() ([]byte, bool) {
+func (r *Reader) ReadString() (string, bool) {
+	if bytes, ok := r.ReadStringBytes(); ok {
+		return string(bytes), true
+	}
+	return "", false
+}
+
+func (r *Reader) ReadStringBytes() ([]byte, bool) {
 	if r.err != nil {
 		return nil, false
 	}
@@ -56,13 +73,6 @@ func (r *Reader) ReadRawString() ([]byte, bool) {
 
 		r.pos++
 	}
-}
-
-func (r *Reader) ReadString() (string, bool) {
-	if raw, ok := r.ReadRawString(); ok {
-		return string(raw), true
-	}
-	return "", false
 }
 
 func (r *Reader) SkipString() bool {
@@ -125,7 +135,7 @@ func (r *Reader) SkipString() bool {
 	return false
 }
 
-func (w *Writer) writeEscapedString(value string) {
+func (w *Writer) writeEscapedString(value []byte) {
 	start := 0
 	for i := 0; i < len(value); i++ {
 		c := value[i]
@@ -332,4 +342,18 @@ func (r *Reader) parseHex4() (rune, bool) {
 		r.pos++
 	}
 	return val, true
+}
+
+func BytesToStr(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	return unsafe.String(unsafe.SliceData(data), len(data))
+}
+
+func StrToBytes(str string) []byte {
+	if str == "" {
+		return nil
+	}
+	return unsafe.Slice(unsafe.StringData(str), len(str))
 }
