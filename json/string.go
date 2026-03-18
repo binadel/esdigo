@@ -2,13 +2,14 @@ package json
 
 import (
 	"unicode/utf8"
-	"unsafe"
+
+	"github.com/binadel/esdigo/utils"
 )
 
 const hex = "0123456789abcdef"
 
 func (w *Writer) WriteString(value string) {
-	bytes := StrToBytes(value)
+	bytes := utils.UnsafeBytes(value)
 	w.data = append(w.data, '"')
 	w.writeEscapedString(bytes)
 	w.data = append(w.data, '"')
@@ -342,18 +343,4 @@ func (r *Reader) parseHex4() (rune, bool) {
 		r.pos++
 	}
 	return val, true
-}
-
-func BytesToStr(data []byte) string {
-	if len(data) == 0 {
-		return ""
-	}
-	return unsafe.String(unsafe.SliceData(data), len(data))
-}
-
-func StrToBytes(str string) []byte {
-	if str == "" {
-		return nil
-	}
-	return unsafe.Slice(unsafe.StringData(str), len(str))
 }

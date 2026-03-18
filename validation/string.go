@@ -27,23 +27,38 @@ func (s *String) NotNull() *String {
 	return s
 }
 
+func (s *String) Email() *Email {
+	return &Email{*s}
+}
+
+func (s *String) validateRaw(value types.String) []Error {
+	var errorList []Error
+
+	if s.required && !value.Present {
+		errorList = append(errorList, errors.Required)
+		return errorList
+	}
+	if s.notNull && !value.Defined {
+		errorList = append(errorList, errors.NotNull)
+		return errorList
+	}
+	if !value.Valid {
+		errorList = append(errorList, errors.InvalidString)
+		return errorList
+	}
+
+	return errorList
+}
+
 func (s *String) Validate(value types.String) Result[string] {
 	result := Result[string]{
 		Path:    s.Path,
+		Errors:  s.validateRaw(value),
 		Present: value.Present,
 		Defined: value.Defined,
 	}
 
-	if s.required && !value.Present {
-		result.Errors = append(result.Errors, errors.Required)
-		return result
-	}
-	if s.notNull && !value.Defined {
-		result.Errors = append(result.Errors, errors.NotNull)
-		return result
-	}
-	if !value.Valid {
-		result.Errors = append(result.Errors, errors.InvalidString)
+	if !result.IsValid() {
 		return result
 	}
 

@@ -1,6 +1,9 @@
 package types
 
-import "github.com/binadel/esdigo/json"
+import (
+	"github.com/binadel/esdigo/json"
+	"github.com/binadel/esdigo/utils"
+)
 
 type String struct {
 	Present bool
@@ -41,7 +44,7 @@ func (s *String) SetString(value string) {
 		Present: true,
 		Defined: true,
 		Valid:   true,
-		Value:   json.StrToBytes(value),
+		Value:   utils.UnsafeBytes(value),
 	}
 }
 

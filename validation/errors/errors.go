@@ -27,4 +27,9 @@ var (
 		Code:    rules.String,
 		Message: "field must be a valid string value",
 	}
+
+	InvalidEmail = &BasicError{
+		Code:    rules.Email,
+		Message: "value must be a valid email",
+	}
 )

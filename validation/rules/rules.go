@@ -9,4 +9,5 @@ const (
 	Boolean  Code = "BOOLEAN"
 	Number   Code = "NUMBER"
 	String   Code = "STRING"
+	Email    Code = "EMAIL"
 )
