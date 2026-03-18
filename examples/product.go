@@ -124,8 +124,8 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 }
 
 type ValidatedProduct struct {
-	Title       validation.Result[types.String]
-	IsPublished validation.Result[types.Boolean]
+	Title       validation.Result[string]
+	IsPublished validation.Result[bool]
 }
 
 type ProductValidator struct {
@@ -135,12 +135,14 @@ type ProductValidator struct {
 
 func NewProductValidator() *ProductValidator {
 	return &ProductValidator{
+		Title:       validation.NewString("title").Required().NotNull().MinLength(2).MaxLength(256),
 		IsPublished: validation.NewBoolean("isPublished").Required().NotNull(),
 	}
 }
 
 func (v *ProductValidator) Validate(p *Product) *ValidatedProduct {
 	return &ValidatedProduct{
+		Title:       v.Title.Validate(p.Title),
 		IsPublished: v.IsPublished.Validate(p.IsPublished),
 	}
 }

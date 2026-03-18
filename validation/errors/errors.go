@@ -32,4 +32,19 @@ var (
 		Code:    rules.Email,
 		Message: "value must be a valid email",
 	}
+
+	Length = BasicError{
+		Code:    rules.Length,
+		Message: "value length must be equal to {{length}}",
+	}
+
+	MinLength = BasicError{
+		Code:    rules.MinLength,
+		Message: "value length must be at least {{minLength}}",
+	}
+
+	MaxLength = BasicError{
+		Code:    rules.MaxLength,
+		Message: "value length must be at most {{maxLength}}",
+	}
 )
