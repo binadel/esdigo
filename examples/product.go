@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/mail"
+
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/json/types"
 	"github.com/binadel/esdigo/validation"
@@ -11,6 +13,7 @@ type Product struct {
 	Description types.String
 	Price       types.Number
 	IsPublished types.Boolean
+	Email       types.String
 }
 
 func (p *Product) CreateValue() *Product {
@@ -63,6 +66,16 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
+	if p.Email.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString(`"email":`)
+		if !p.Email.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
 	w.EndObject()
 	return true
 }
@@ -91,6 +104,8 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 						ok = p.Price.ReadJSON(r)
 					case "isPublished":
 						ok = p.IsPublished.ReadJSON(r)
+					case "email":
+						ok = p.Email.ReadJSON(r)
 					default:
 						ok = r.SkipValue()
 					}
@@ -126,17 +141,20 @@ func (p *Product) ReadJSON(r *json.Reader) bool {
 type ValidatedProduct struct {
 	Title       validation.Result[string]
 	IsPublished validation.Result[bool]
+	Email       validation.Result[*mail.Address]
 }
 
 type ProductValidator struct {
 	Title       *validation.String
 	IsPublished *validation.Boolean
+	Email       *validation.Email
 }
 
 func NewProductValidator() *ProductValidator {
 	return &ProductValidator{
 		Title:       validation.NewString("title").Required().NotNull().MinLength(2).MaxLength(256),
 		IsPublished: validation.NewBoolean("isPublished").Required().NotNull(),
+		Email:       validation.NewString("email").Required().Pattern(validation.PatternEmail).Email(),
 	}
 }
 
@@ -144,5 +162,6 @@ func (v *ProductValidator) Validate(p *Product) *ValidatedProduct {
 	return &ValidatedProduct{
 		Title:       v.Title.Validate(p.Title),
 		IsPublished: v.IsPublished.Validate(p.IsPublished),
+		Email:       v.Email.Validate(p.Email),
 	}
 }

@@ -12,5 +12,6 @@ const (
 	Length    Code = "LENGTH"
 	MinLength Code = "MIN_LENGTH"
 	MaxLength Code = "MAX_LENGTH"
+	Pattern   Code = "PATTERN"
 	Email     Code = "EMAIL"
 )

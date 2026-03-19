@@ -28,11 +28,6 @@ var (
 		Message: "field must be a valid string value",
 	}
 
-	InvalidEmail = &BasicError{
-		Code:    rules.Email,
-		Message: "value must be a valid email",
-	}
-
 	Length = BasicError{
 		Code:    rules.Length,
 		Message: "value length must be equal to {{length}}",
@@ -46,5 +41,15 @@ var (
 	MaxLength = BasicError{
 		Code:    rules.MaxLength,
 		Message: "value length must be at most {{maxLength}}",
+	}
+
+	Pattern = &BasicError{
+		Code:    rules.Pattern,
+		Message: "value does not match the required pattern",
+	}
+
+	InvalidEmail = &BasicError{
+		Code:    rules.Email,
+		Message: "value must be a valid email",
 	}
 )

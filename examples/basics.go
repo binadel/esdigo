@@ -29,7 +29,7 @@ func main() {
 	//}
 	//fmt.Println(r1.Product.Value)
 
-	js := `{"title": "p", "isPublished": false}`
+	js := `{"title": "ps5", "isPublished": false, "email": "s user@email.com"}`
 	p := &Product{}
 	err := p.UnmarshalJSON([]byte(js))
 	if err != nil {
@@ -42,9 +42,11 @@ func main() {
 
 	fmt.Println(validated.Title.Value)
 	fmt.Println(validated.IsPublished.Value)
+	fmt.Println(validated.Email.Value)
 
 	w := json.NewWriter(128)
 	validated.Title.WriteJSON(w)
 	validated.IsPublished.WriteJSON(w)
+	validated.Email.WriteJSON(w)
 	fmt.Println(string(w.Bytes()))
 }

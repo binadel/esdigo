@@ -1,12 +1,15 @@
 package validation
 
 import (
+	"regexp"
 	"unicode/utf8"
 
 	"github.com/binadel/esdigo/json/types"
 	"github.com/binadel/esdigo/utils"
 	"github.com/binadel/esdigo/validation/errors"
 )
+
+var regexCache = &utils.RegexCache{}
 
 type String struct {
 	Path     FieldPath
@@ -15,6 +18,7 @@ type String struct {
 	len      int
 	minLen   int
 	maxLen   int
+	pattern  *regexp.Regexp
 }
 
 func NewString(path ...string) *String {
@@ -48,6 +52,11 @@ func (s *String) MaxLength(maxLength int) *String {
 	return s
 }
 
+func (s *String) Pattern(pattern string) *String {
+	s.pattern = regexCache.MustGet(pattern)
+	return s
+}
+
 func (s *String) Email() *Email {
 	return &Email{*s}
 }
@@ -59,16 +68,14 @@ func (s *String) validateRaw(value types.String) []Error {
 		errorList = append(errorList, errors.Required)
 		return errorList
 	}
+
 	if s.notNull && !value.Defined {
 		errorList = append(errorList, errors.NotNull)
 		return errorList
 	}
+
 	if !value.Valid {
 		errorList = append(errorList, errors.InvalidString)
-		return errorList
-	}
-
-	if len(errorList) > 0 {
 		return errorList
 	}
 
@@ -106,6 +113,12 @@ func (s *String) validateRaw(value types.String) []Error {
 				ParamKey:   errors.ParamKeyMaxLength,
 				ParamValue: int64(s.maxLen),
 			})
+		}
+	}
+
+	if s.pattern != nil {
+		if !s.pattern.MatchString(str) {
+			errorList = append(errorList, errors.Pattern)
 		}
 	}
 
