@@ -21,18 +21,18 @@ func (b *Boolean) IsValid() bool {
 	return b.Valid
 }
 
-func (b *Boolean) SetNull() {
-	*b = Boolean{
-		Present: true,
-	}
-}
-
 func (b *Boolean) Set(value bool) {
 	*b = Boolean{
 		Present: true,
 		Defined: true,
 		Valid:   true,
 		Value:   value,
+	}
+}
+
+func (b *Boolean) SetNull() {
+	*b = Boolean{
+		Present: true,
 	}
 }
 

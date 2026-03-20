@@ -1,8 +1,16 @@
 package types
 
 import (
+	"net"
+	"net/mail"
+	"net/url"
+	"regexp"
+	"time"
+
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/utils"
+	"github.com/google/uuid"
+	"github.com/sosodev/duration"
 )
 
 type String struct {
@@ -24,12 +32,6 @@ func (s *String) IsValid() bool {
 	return s.Valid
 }
 
-func (s *String) SetNull() {
-	*s = String{
-		Present: true,
-	}
-}
-
 func (s *String) Set(value []byte) {
 	*s = String{
 		Present: true,
@@ -45,6 +47,112 @@ func (s *String) SetString(value string) {
 		Defined: true,
 		Valid:   true,
 		Value:   utils.UnsafeBytes(value),
+	}
+}
+
+func (s *String) SetRegex(value *regexp.Regexp) {
+	if value == nil {
+		s.SetNull()
+		return
+	}
+
+	str := value.String()
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetTime(value time.Time, layout string) {
+	if value.IsZero() {
+		s.SetNull()
+		return
+	}
+
+	str := value.Format(layout)
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetDuration(value time.Duration) {
+	if value == 0 {
+		s.SetNull()
+		return
+	}
+
+	str := duration.Format(value)
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetEmail(value *mail.Address) {
+	if value == nil {
+		s.SetNull()
+		return
+	}
+
+	str := value.String()
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetIP(value net.IP) {
+	if value == nil {
+		s.SetNull()
+		return
+	}
+
+	str := value.String()
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetUri(value *url.URL) {
+	if value == nil {
+		s.SetNull()
+		return
+	}
+
+	str := value.String()
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetUuid(value uuid.UUID) {
+	str := value.String()
+	*s = String{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   utils.UnsafeBytes(str),
+	}
+}
+
+func (s *String) SetNull() {
+	*s = String{
+		Present: true,
 	}
 }
 
