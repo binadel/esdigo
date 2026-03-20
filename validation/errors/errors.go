@@ -53,6 +53,11 @@ var (
 		Message: "value must be a valid email",
 	}
 
+	InvalidUri = &BasicError{
+		Code:    rules.Uri,
+		Message: "value must be a valid URI",
+	}
+
 	InvalidUuid = &BasicError{
 		Code:    rules.Uuid,
 		Message: "value must be a valid UUID",

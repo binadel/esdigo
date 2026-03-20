@@ -14,6 +14,7 @@ const (
 	MaxLength   Code = "MAX_LENGTH"
 	Pattern     Code = "PATTERN"
 	Email       Code = "EMAIL"
+	Uri         Code = "URI"
 	Uuid        Code = "UUID"
 	UuidVersion Code = "UUID_VERSION"
 )
