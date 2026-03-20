@@ -53,6 +53,21 @@ var (
 		Message: "value must be a valid email",
 	}
 
+	InvalidIP = &BasicError{
+		Code:    rules.IP,
+		Message: "value must be a valid IP address",
+	}
+
+	InvalidIPv4 = &BasicError{
+		Code:    rules.IPv4,
+		Message: "value must be a valid IPv4 address",
+	}
+
+	InvalidIPv6 = &BasicError{
+		Code:    rules.IPv6,
+		Message: "value must be a valid IPv6 address",
+	}
+
 	InvalidUri = &BasicError{
 		Code:    rules.Uri,
 		Message: "value must be a valid URI",

@@ -61,6 +61,10 @@ func (s *String) Email() *Email {
 	return &Email{*s}
 }
 
+func (s *String) IP() *IP {
+	return &IP{*s, 0}
+}
+
 func (s *String) Uri() *Uri {
 	return &Uri{*s}
 }
