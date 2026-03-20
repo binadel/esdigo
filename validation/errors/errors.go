@@ -52,4 +52,14 @@ var (
 		Code:    rules.Email,
 		Message: "value must be a valid email",
 	}
+
+	InvalidUuid = &BasicError{
+		Code:    rules.Uuid,
+		Message: "value must be a valid UUID",
+	}
+
+	UuidVersion = BasicError{
+		Code:    rules.UuidVersion,
+		Message: "value must be a valid UUID version {{version}}",
+	}
 )

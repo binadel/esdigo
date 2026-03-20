@@ -61,6 +61,10 @@ func (s *String) Email() *Email {
 	return &Email{*s}
 }
 
+func (s *String) Uuid() *Uuid {
+	return &Uuid{*s, 0}
+}
+
 func (s *String) validateRaw(value types.String) []Error {
 	var errorList []Error
 
