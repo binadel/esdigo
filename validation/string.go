@@ -2,6 +2,7 @@ package validation
 
 import (
 	"regexp"
+	"time"
 	"unicode/utf8"
 
 	"github.com/binadel/esdigo/json/types"
@@ -67,6 +68,31 @@ func (s *String) IP() *IP {
 
 func (s *String) Regex() *Regex {
 	return &Regex{*s}
+}
+
+func (s *String) Date(formats ...string) *Time {
+	if len(formats) == 0 {
+		formats = []string{time.DateOnly}
+	}
+	return &Time{*s, true, false, formats}
+}
+
+func (s *String) Time(formats ...string) *Time {
+	if len(formats) == 0 {
+		formats = []string{time.TimeOnly}
+	}
+	return &Time{*s, false, true, formats}
+}
+
+func (s *String) DateTime(formats ...string) *Time {
+	if len(formats) == 0 {
+		formats = []string{time.RFC3339Nano}
+	}
+	return &Time{*s, false, false, formats}
+}
+
+func (s *String) Duration() *Duration {
+	return &Duration{*s}
 }
 
 func (s *String) Uri() *Uri {

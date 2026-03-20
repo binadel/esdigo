@@ -48,6 +48,31 @@ var (
 		Message: "value does not match the required pattern",
 	}
 
+	InvalidRegex = &BasicError{
+		Code:    rules.Regex,
+		Message: "value must a valid regular expression",
+	}
+
+	Date = &BasicError{
+		Code:    rules.Date,
+		Message: "value must be a valid date",
+	}
+
+	Time = &BasicError{
+		Code:    rules.Time,
+		Message: "value must be a valid time",
+	}
+
+	DateTime = &BasicError{
+		Code:    rules.DateTime,
+		Message: "value must be a valid date time",
+	}
+
+	Duration = &BasicError{
+		Code:    rules.Duration,
+		Message: "value must be a valid duration",
+	}
+
 	InvalidEmail = &BasicError{
 		Code:    rules.Email,
 		Message: "value must be a valid email",
@@ -66,11 +91,6 @@ var (
 	InvalidIPv6 = &BasicError{
 		Code:    rules.IPv6,
 		Message: "value must be a valid IPv6 address",
-	}
-
-	InvalidRegex = &BasicError{
-		Code:    rules.Regex,
-		Message: "value must a valid regular expression",
 	}
 
 	InvalidUri = &BasicError{
