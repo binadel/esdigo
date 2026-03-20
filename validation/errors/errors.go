@@ -68,6 +68,11 @@ var (
 		Message: "value must be a valid IPv6 address",
 	}
 
+	InvalidRegex = &BasicError{
+		Code:    rules.Regex,
+		Message: "value must a valid regular expression",
+	}
+
 	InvalidUri = &BasicError{
 		Code:    rules.Uri,
 		Message: "value must be a valid URI",

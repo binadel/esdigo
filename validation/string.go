@@ -65,6 +65,10 @@ func (s *String) IP() *IP {
 	return &IP{*s, 0}
 }
 
+func (s *String) Regex() *Regex {
+	return &Regex{*s}
+}
+
 func (s *String) Uri() *Uri {
 	return &Uri{*s}
 }

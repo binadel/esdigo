@@ -17,6 +17,7 @@ const (
 	IP          Code = "IP"
 	IPv4        Code = "IPv4"
 	IPv6        Code = "IPv6"
+	Regex       Code = "REGEX"
 	Uri         Code = "URI"
 	Uuid        Code = "UUID"
 	UuidVersion Code = "UUID_VERSION"
