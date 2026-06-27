@@ -1,27 +1,35 @@
 package types
 
-import "github.com/binadel/esdigo/json"
+import (
+	"strconv"
+
+	"github.com/binadel/esdigo/json"
+	"github.com/binadel/esdigo/utils"
+)
 
 type Number struct {
-	Present bool
-	Defined bool
-	Valid   bool
-	Value   json.NumberValue
+	Present  bool
+	Defined  bool
+	Valid    bool
+	negative bool
+	dotPos   byte
+	expPos   byte
+	Value    []byte
 }
 
-func (n Number) IsPresent() bool {
+func (n *Number) IsPresent() bool {
 	return n.Present
 }
 
-func (n Number) IsDefined() bool {
+func (n *Number) IsDefined() bool {
 	return n.Defined
 }
 
-func (n Number) IsValid() bool {
+func (n *Number) IsValid() bool {
 	return n.Valid
 }
 
-func (n *Number) Set(value json.NumberValue) {
+func (n *Number) Set(value []byte) {
 	*n = Number{
 		Present: true,
 		Defined: true,
@@ -30,21 +38,21 @@ func (n *Number) Set(value json.NumberValue) {
 	}
 }
 
-func (n *Number) SetInt(value int64) {
-	coefficient := uint64(value)
-	if value < 0 {
-		coefficient = uint64(-value)
-	}
+func (n *Number) SetString(value string) {
 	*n = Number{
 		Present: true,
 		Defined: true,
 		Valid:   true,
-		Value: json.NumberValue{
-			Negative:    value < 0,
-			Type:        json.NumberTypeInteger,
-			Coefficient: coefficient,
-			Exponent:    0,
-		},
+		Value:   utils.UnsafeBytes(value),
+	}
+}
+
+func (n *Number) SetInt(value int64) {
+	*n = Number{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   strconv.AppendInt(n.Value, value, 10),
 	}
 }
 
@@ -53,12 +61,16 @@ func (n *Number) SetUInt(value uint64) {
 		Present: true,
 		Defined: true,
 		Valid:   true,
+		Value:   strconv.AppendUint(n.Value, value, 10),
 	}
-	n.Value = json.NumberValue{
-		Negative:    false,
-		Type:        json.NumberTypeInteger,
-		Coefficient: value,
-		Exponent:    0,
+}
+
+func (n *Number) SetFloat(value float64) {
+	*n = Number{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   strconv.AppendFloat(n.Value, value, 'g', -1, 64),
 	}
 }
 
@@ -68,10 +80,10 @@ func (n *Number) SetNull() {
 	}
 }
 
-func (n Number) WriteJSON(w *json.Writer) bool {
+func (n *Number) WriteJSON(w *json.Writer) bool {
 	if n.Defined {
 		if n.Valid {
-			w.WriteNumber(n.Value)
+			w.WriteRawNumber(n.Value)
 		} else {
 			return false
 		}
@@ -94,7 +106,7 @@ func (n *Number) ReadJSON(r *json.Reader) bool {
 
 	n.Defined = true
 
-	if value, ok := r.ReadNumber(); ok {
+	if value, ok := r.ReadRawNumber(); ok {
 		r.SkipWhitespace()
 		n.Valid = true
 		n.Value = value

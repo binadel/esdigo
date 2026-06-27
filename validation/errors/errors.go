@@ -28,6 +28,16 @@ var (
 		Message: "field must be a valid string value",
 	}
 
+	InvalidArray = &BasicError{
+		Code:    rules.Array,
+		Message: "field must be a valid array value",
+	}
+
+	InvalidObject = &BasicError{
+		Code:    rules.Object,
+		Message: "field must be a valid object value",
+	}
+
 	Length = BasicError{
 		Code:    rules.Length,
 		Message: "value length must be equal to {{length}}",
@@ -106,5 +116,20 @@ var (
 	UuidVersion = BasicError{
 		Code:    rules.UuidVersion,
 		Message: "value must be a valid UUID version {{version}}",
+	}
+
+	ExactItems = BasicError{
+		Code:    rules.ExactItems,
+		Message: "value must contain exactly {{count}} items",
+	}
+
+	MinItems = BasicError{
+		Code:    rules.MinItems,
+		Message: "value must contain minimum {{count}} items",
+	}
+
+	MaxItems = BasicError{
+		Code:    rules.MaxItems,
+		Message: "value must contain maximum {{count}} items",
 	}
 )

@@ -9,6 +9,8 @@ const (
 	Boolean     Code = "BOOLEAN"
 	Number      Code = "NUMBER"
 	String      Code = "STRING"
+	Array       Code = "ARRAY"
+	Object      Code = "OBJECT"
 	Length      Code = "LENGTH"
 	MinLength   Code = "MIN_LENGTH"
 	MaxLength   Code = "MAX_LENGTH"
@@ -25,4 +27,7 @@ const (
 	Uri         Code = "URI"
 	Uuid        Code = "UUID"
 	UuidVersion Code = "UUID_VERSION"
+	ExactItems  Code = "EXACT_ITEMS"
+	MinItems    Code = "MIN_ITEMS"
+	MaxItems    Code = "MAX_ITEMS"
 )
