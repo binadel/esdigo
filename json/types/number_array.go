@@ -1,90 +1,59 @@
 package types
 
-import "github.com/binadel/esdigo/json"
+import (
+	"strconv"
 
+	"github.com/binadel/esdigo/json"
+)
+
+// NumberArray is a flat array of JSON numbers held as their raw token bytes,
+// which is lossless for values of any magnitude or precision. Each element
+// aliases the input buffer on read (zero-copy), like the other raw types here,
+// so it is valid only while the source bytes live unmodified.
 type NumberArray struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   []json.NumberValue
+	Value   [][]byte
 }
 
-func (a NumberArray) IsPresent() bool {
-	return a.Present
-}
+func (a *NumberArray) IsPresent() bool { return a.Present }
+func (a *NumberArray) IsDefined() bool { return a.Defined }
+func (a *NumberArray) IsValid() bool   { return a.Valid }
 
-func (a NumberArray) IsDefined() bool {
-	return a.Defined
-}
-
-func (a NumberArray) IsValid() bool {
-	return a.Valid
-}
-
-func (a *NumberArray) Set(value []json.NumberValue) {
-	*a = NumberArray{
-		Present: true,
-		Defined: true,
-		Valid:   true,
-		Value:   value,
-	}
+func (a *NumberArray) Set(value [][]byte) {
+	*a = NumberArray{Present: true, Defined: true, Valid: true, Value: value}
 }
 
 func (a *NumberArray) SetIntArray(value []int64) {
-	*a = NumberArray{
-		Present: true,
-		Defined: true,
-		Valid:   true,
-		Value:   make([]json.NumberValue, len(value)),
-	}
+	out := make([][]byte, len(value))
 	for i, v := range value {
-		coefficient := uint64(v)
-		if v < 0 {
-			coefficient = uint64(-v)
-		}
-		a.Value[i] = json.NumberValue{
-			Negative:    v < 0,
-			Type:        json.NumberTypeInteger,
-			Coefficient: coefficient,
-			Exponent:    0,
-		}
+		out[i] = strconv.AppendInt(nil, v, 10)
 	}
+	*a = NumberArray{Present: true, Defined: true, Valid: true, Value: out}
 }
 
 func (a *NumberArray) SetUIntArray(value []uint64) {
-	*a = NumberArray{
-		Present: true,
-		Defined: true,
-		Valid:   true,
-		Value:   make([]json.NumberValue, len(value)),
-	}
+	out := make([][]byte, len(value))
 	for i, v := range value {
-		a.Value[i] = json.NumberValue{
-			Negative:    false,
-			Type:        json.NumberTypeInteger,
-			Coefficient: v,
-			Exponent:    0,
-		}
+		out[i] = strconv.AppendUint(nil, v, 10)
 	}
+	*a = NumberArray{Present: true, Defined: true, Valid: true, Value: out}
 }
 
 func (a *NumberArray) SetNull() {
-	*a = NumberArray{
-		Present: true,
-	}
+	*a = NumberArray{Present: true}
 }
 
-func (a NumberArray) WriteJSON(w *json.Writer) bool {
+func (a *NumberArray) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
-			needsComma := false
 			w.BeginArray()
-			for _, v := range a.Value {
-				if needsComma {
+			for i, v := range a.Value {
+				if i > 0 {
 					w.ValueSeparator()
 				}
-				w.WriteNumber(v)
-				needsComma = true
+				w.WriteRawNumber(v)
 			}
 			w.EndArray()
 		} else {
@@ -97,9 +66,7 @@ func (a NumberArray) WriteJSON(w *json.Writer) bool {
 }
 
 func (a *NumberArray) ReadJSON(r *json.Reader) bool {
-	*a = NumberArray{
-		Present: true,
-	}
+	*a = NumberArray{Present: true}
 
 	r.SkipWhitespace()
 
@@ -120,7 +87,7 @@ func (a *NumberArray) ReadJSON(r *json.Reader) bool {
 		}
 
 		for {
-			if value, ok := r.ReadNumber(); ok {
+			if value, ok := r.ReadRawNumber(); ok {
 				a.Value = append(a.Value, value)
 			} else if r.SkipValue() {
 				skipped = true

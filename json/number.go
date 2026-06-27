@@ -23,13 +23,6 @@ type NumberValue struct {
 	Coefficient uint64
 }
 
-type PreparedNumber struct {
-	Neg    bool
-	DotPos byte
-	ExpPos byte
-	Value  []byte
-}
-
 func (w *Writer) WriteRawNumber(value []byte) {
 	w.data = append(w.data, value...)
 }
@@ -63,112 +56,24 @@ func (w *Writer) WriteFloatNumber(value float64) {
 	}
 }
 
+// WriteFloat32 writes a float32 using the shortest representation that
+// round-trips at 32-bit precision (avoids the extra digits a float64 format
+// would emit for a value that originated as a float32).
+func (w *Writer) WriteFloat32(value float32) {
+	v := float64(value)
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		w.WriteNull()
+	} else {
+		w.data = strconv.AppendFloat(w.data, v, 'g', -1, 32)
+	}
+}
+
 func (r *Reader) ReadRawNumber() ([]byte, bool) {
 	start := r.pos
 	if r.SkipNumber() {
 		return r.data[start:r.pos], true
 	}
 	return nil, false
-}
-
-func (r *Reader) ReadPreparedNumber() (value PreparedNumber, ok bool) {
-	if r.err != nil {
-		return
-	}
-
-	if r.pos >= len(r.data) {
-		r.SetEofError()
-		return
-	}
-
-	// minus sign
-	negative := r.data[r.pos] == '-'
-	if negative {
-		r.pos++
-		if r.pos >= len(r.data) {
-			r.SetEofError()
-			return
-		}
-	}
-
-	// integer part
-	if c := r.data[r.pos]; c == '0' {
-		r.pos++
-		if r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.SetSyntaxError("invalid leading zero in number")
-				return
-			}
-		}
-	} else if c >= '1' && c <= '9' {
-		r.pos++
-		for r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.pos++
-			} else {
-				break
-			}
-		}
-	} else {
-		if negative {
-			r.SetSyntaxError("expected digit after minus sign in number")
-		}
-		return
-	}
-
-	// fractional part
-	if r.pos < len(r.data) && r.data[r.pos] == '.' {
-		r.pos++
-		if r.pos >= len(r.data) {
-			r.SetEofError()
-			return
-		}
-
-		if c := r.data[r.pos]; c < '0' || c > '9' {
-			r.SetSyntaxError("expected digit after decimal point in number")
-			return
-		}
-		r.pos++
-		for r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.pos++
-			} else {
-				break
-			}
-		}
-	}
-
-	// exponent part
-	if r.pos < len(r.data) && (r.data[r.pos] == 'e' || r.data[r.pos] == 'E') {
-		r.pos++
-		if r.pos >= len(r.data) {
-			r.SetEofError()
-			return
-		}
-
-		if r.data[r.pos] == '+' || r.data[r.pos] == '-' {
-			r.pos++
-			if r.pos >= len(r.data) {
-				r.SetEofError()
-				return
-			}
-		}
-
-		if c := r.data[r.pos]; c < '0' || c > '9' {
-			r.SetSyntaxError("expected digit after exponent sign in number")
-			return
-		}
-		r.pos++
-		for r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.pos++
-			} else {
-				break
-			}
-		}
-	}
-
-	return value, true
 }
 
 func (r *Reader) ReadNumber() (value NumberValue, ok bool) {

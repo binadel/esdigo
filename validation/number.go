@@ -27,7 +27,7 @@ func (n *Number) NotNull() *Number {
 	return n
 }
 
-func (n *Number) validateRaw(value types.Number) []Error {
+func (n *Number) validateRaw(value types.RawNumber) []Error {
 	var errorList []Error
 
 	if n.required && !value.Present {
@@ -48,7 +48,7 @@ func (n *Number) validateRaw(value types.Number) []Error {
 	return errorList
 }
 
-func (n *Number) Validate(value types.Number) Result[string] {
+func (n *Number) Validate(value types.RawNumber) Result[string] {
 	result := Result[string]{
 		Path:    n.Path,
 		Errors:  n.validateRaw(value),

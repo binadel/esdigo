@@ -36,6 +36,15 @@ func (r *Reader) Error() error {
 	return r.err
 }
 
+// Reset reuses the Reader for new input, clearing position and error.
+// This lets a Reader be pooled and reused across parses without allocation.
+// The input slice is not copied.
+func (r *Reader) Reset(data []byte) {
+	r.data = data
+	r.pos = 0
+	r.err = nil
+}
+
 // SetEofError sets an unexpected EOF error if no prior error exists.
 func (r *Reader) SetEofError() {
 	if r.err == nil {

@@ -11,7 +11,7 @@ import (
 type Product struct {
 	Title       types.String
 	Description types.String
-	Price       types.Number
+	Price       types.RawNumber
 	IsPublished types.Boolean
 	Email       types.String
 }

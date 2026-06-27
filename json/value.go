@@ -112,9 +112,11 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 			return
 		}
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		if payload, ok := r.ReadNumber(); ok {
+		if payload, ok := r.ReadRawNumber(); ok {
 			value.Type = ValueTypeNumber
-			value.Payload = payload
+			// Copy: the DOM outlives the input buffer, so it must not alias it
+			// (ReadString copies too). WriteValue asserts []byte to match.
+			value.Payload = append([]byte(nil), payload...)
 		} else {
 			return
 		}
