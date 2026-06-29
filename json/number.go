@@ -2,6 +2,7 @@ package json
 
 import (
 	"math"
+	"math/big"
 	"strconv"
 )
 
@@ -48,23 +49,27 @@ func (w *Writer) WriteUIntNumber(value uint64) {
 	w.data = strconv.AppendUint(w.data, value, 10)
 }
 
-func (w *Writer) WriteFloatNumber(value float64) {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
+func (w *Writer) WriteBigIntNumber(value *big.Int) {
+	if value == nil {
 		w.WriteNull()
 	} else {
-		w.data = strconv.AppendFloat(w.data, value, 'g', -1, 64)
+		w.WriteRawString(value.Text(10))
 	}
 }
 
-// WriteFloat32 writes a float32 using the shortest representation that
-// round-trips at 32-bit precision (avoids the extra digits a float64 format
-// would emit for a value that originated as a float32).
-func (w *Writer) WriteFloat32(value float32) {
-	v := float64(value)
-	if math.IsNaN(v) || math.IsInf(v, 0) {
+func (w *Writer) WriteFloatNumber(value float64, bitSize int) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
 		w.WriteNull()
 	} else {
-		w.data = strconv.AppendFloat(w.data, v, 'g', -1, 32)
+		w.data = strconv.AppendFloat(w.data, value, 'g', -1, bitSize)
+	}
+}
+
+func (w *Writer) WriteBigFloatNumber(value *big.Float) {
+	if value == nil || value.IsInf() {
+		w.WriteNull()
+	} else {
+		w.WriteRawString(value.Text('g', -1))
 	}
 }
 

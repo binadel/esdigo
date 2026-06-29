@@ -1,6 +1,7 @@
 package types
 
 import (
+	"math"
 	"math/big"
 	"strconv"
 	"unsafe"
@@ -8,8 +9,6 @@ import (
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/utils"
 )
-
-// --- numeric type constraints ---
 
 type signed interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64
@@ -27,44 +26,39 @@ type float interface {
 	~float32 | ~float64
 }
 
-// numberCodec is the behavior parameter of Integer and Number. It is a pure
-// token<->value converter: it never touches the Reader (the field envelope owns
-// all reader interaction: null, the raw-number read, whitespace and skipping),
-// so a token that is consumed but not convertible (e.g. "1e3" into a big.Int)
-// simply yields Valid=false instead of a spurious parse error.
+// numberCodec is the behavior parameter of Number. It reads one JSON number from
+// the Reader and converts it to/from the in-memory value V using the json
+// package's own scanner (ReadNumber/ReadRawNumber) — types never implement a
+// parser themselves.
+//
+// The field envelope (Number.ReadJSON) handles null and the not-a-number case
+// (it peeks with NextIsNumber and skips non-numbers), so decode is invoked only
+// when a number token is present and returns whether that number was a valid
+// value for V. A number that is read but not convertible (e.g. "1e3" into a
+// big.Int, or an out-of-range integer) returns false (Valid=false) without a
+// spurious skip, because it has already been consumed.
 //
 // Implementations are zero-size struct types, so a codec value carries no state
 // and costs nothing to construct. The interface is sealed (unexported methods):
 // the set of number backings is closed to this package, and callers select one
-// through the exported aliases (Int64, Uint64, BigInt, RawInt, Float64, ...).
+// through the exported aliases (Int64, UInt64, BigInt, RawNumber, Float64, ...).
 type numberCodec[V any] interface {
-	// decode converts a raw JSON number token into *dst, reporting whether the
-	// token is representable in V. token is never empty.
-	decode(token []byte, dst *V) bool
-	// write appends the JSON form of v to the writer.
+	decode(r *json.Reader, dst *V) bool
 	write(w *json.Writer, v V)
 }
 
-// --- scalar integer backing (int/uint of any width) ---
-
 type scalarInt[T integer] struct{}
 
-func (scalarInt[T]) decode(token []byte, dst *T) bool {
-	var zero T
-	bits := int(unsafe.Sizeof(zero)) * 8
-	if zero-1 > zero { // unsigned: 0-1 wraps to the max value, which is > 0
-		u, err := strconv.ParseUint(utils.UnsafeString(token), 10, bits)
-		if err != nil {
-			return false
-		}
-		*dst = T(u)
-		return true
-	}
-	i, err := strconv.ParseInt(utils.UnsafeString(token), 10, bits)
-	if err != nil {
+func (scalarInt[T]) decode(r *json.Reader, dst *T) bool {
+	num, ok := r.ReadNumber()
+	if !ok {
 		return false
 	}
-	*dst = T(i)
+	v, ok := intFromNumber[T](num)
+	if !ok {
+		return false
+	}
+	*dst = v
 	return true
 }
 
@@ -77,11 +71,70 @@ func (scalarInt[T]) write(w *json.Writer, v T) {
 	}
 }
 
-// --- scalar float backing (float32/float64) ---
+// intFromNumber converts a NumberValue (from the reader's own ReadNumber) into an
+// integer of type T, following JSON Schema's "integer" definition: any number
+// with a zero fractional part qualifies, so "1e3", "1.0" and "120e-1" convert,
+// while "1.5" or out-of-range magnitudes do not.
+func intFromNumber[T integer](num json.NumberValue) (value T, ok bool) {
+	if num.Type != json.NumberTypeInteger {
+		return
+	}
+
+	mag := num.Coefficient
+	if mag == 0 {
+		return 0, true
+	}
+
+	exp := int(num.Exponent)
+	for exp > 0 { // scale up, guarding uint64 overflow
+		if mag > math.MaxUint64/10 {
+			return
+		}
+		mag *= 10
+		exp--
+	}
+	for exp < 0 { // exact: an integer-valued number has the required trailing zeros
+		mag /= 10
+		exp++
+	}
+
+	var zero T
+	bits := uint(unsafe.Sizeof(zero)) * 8
+	if zero-1 > zero { // unsigned
+		if num.Negative {
+			return
+		}
+		if bits < 64 && mag > uint64(1)<<bits-1 {
+			return
+		}
+		return T(mag), true
+	}
+
+	if num.Negative {
+		cutoff := uint64(1) << (bits - 1) // magnitude of the most-negative value
+		if mag > cutoff {
+			return
+		}
+		if mag == cutoff {
+			return T(-int64(mag-1) - 1), true // min value, without overflow
+		}
+		return T(-int64(mag)), true
+	}
+	if mag > uint64(1)<<(bits-1)-1 {
+		return
+	}
+	return T(mag), true
+}
+
+// --- scalar floats ---
 
 type scalarFloat[T float] struct{}
 
-func (scalarFloat[T]) decode(token []byte, dst *T) bool {
+func (scalarFloat[T]) decode(r *json.Reader, dst *T) bool {
+	token, ok := r.ReadRawNumber()
+	if !ok {
+		return false
+	}
 	var zero T
 	f, err := strconv.ParseFloat(utils.UnsafeString(token), int(unsafe.Sizeof(zero))*8)
 	if err != nil {
@@ -94,21 +147,19 @@ func (scalarFloat[T]) decode(token []byte, dst *T) bool {
 func (scalarFloat[T]) write(w *json.Writer, v T) {
 	var zero T
 	if unsafe.Sizeof(zero) == 4 {
-		w.WriteFloat32(float32(v))
+		w.WriteFloatNumber(float64(v), 32)
 	} else {
-		w.WriteFloatNumber(float64(v))
+		w.WriteFloatNumber(float64(v), 64)
 	}
 }
 
-// --- big.Int backing (arbitrary-precision integers) ---
-//
-// SetString(base 10) accepts plain integer syntax with an optional sign. Numbers
-// in exponent or fractional form (e.g. "1e3") are rejected here (Valid=false);
-// use a Number backing or RawInt to retain those losslessly.
-
 type bigIntCodec struct{}
 
-func (bigIntCodec) decode(token []byte, dst **big.Int) bool {
+func (bigIntCodec) decode(r *json.Reader, dst **big.Int) bool {
+	token, ok := r.ReadRawNumber()
+	if !ok {
+		return false
+	}
 	z, ok := new(big.Int).SetString(utils.UnsafeString(token), 10)
 	if !ok {
 		return false
@@ -118,25 +169,23 @@ func (bigIntCodec) decode(token []byte, dst **big.Int) bool {
 }
 
 func (bigIntCodec) write(w *json.Writer, v *big.Int) {
-	if v == nil {
-		w.WriteNull()
-		return
-	}
-	w.WriteRawString(v.Text(10))
+	w.WriteBigIntNumber(v)
 }
-
-// --- big.Float backing (arbitrary-precision reals) ---
 
 type bigFloatCodec struct{}
 
-func (bigFloatCodec) decode(token []byte, dst **big.Float) bool {
+func (bigFloatCodec) decode(r *json.Reader, dst **big.Float) bool {
+	token, ok := r.ReadRawNumber()
+	if !ok {
+		return false
+	}
 	// give the mantissa enough bits to hold every digit of the literal
 	// (~3.33 bits per decimal digit; 4 is a safe upper bound).
-	prec := uint(len(token)) * 4
-	if prec < 64 {
-		prec = 64
+	precision := uint(len(token)) * 4
+	if precision < 64 {
+		precision = 64
 	}
-	f, _, err := big.ParseFloat(utils.UnsafeString(token), 10, prec, big.ToNearestEven)
+	f, _, err := big.ParseFloat(utils.UnsafeString(token), 10, precision, big.ToNearestEven)
 	if err != nil {
 		return false
 	}
@@ -145,21 +194,16 @@ func (bigFloatCodec) decode(token []byte, dst **big.Float) bool {
 }
 
 func (bigFloatCodec) write(w *json.Writer, v *big.Float) {
-	if v == nil || v.IsInf() {
-		w.WriteNull()
-		return
-	}
-	w.WriteRawString(v.Text('g', -1))
+	w.WriteBigFloatNumber(v)
 }
-
-// --- raw backing (lossless, zero-copy on read; shared by Integer and Number) ---
-//
-// The decoded value aliases the input buffer, like other raw types in this
-// package; it is valid only while the source bytes live unmodified.
 
 type rawCodec struct{}
 
-func (rawCodec) decode(token []byte, dst *[]byte) bool {
+func (rawCodec) decode(r *json.Reader, dst *[]byte) bool {
+	token, ok := r.ReadRawNumber()
+	if !ok {
+		return false
+	}
 	*dst = token
 	return true
 }
