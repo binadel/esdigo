@@ -73,8 +73,8 @@ func (a *Array[V, PV]) validateRaw(value types.Array[V, PV]) []Error {
 	return errorList
 }
 
-func (a *Array[V, PV]) Validate(value types.Array[V, PV]) Result[[]V] {
-	result := Result[[]V]{
+func (a *Array[V, PV]) Validate(value types.Array[V, PV]) Result[[]PV] {
+	result := Result[[]PV]{
 		Path:    a.Path,
 		Errors:  a.validateRaw(value),
 		Present: value.Present,

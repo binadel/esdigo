@@ -6,7 +6,7 @@ type Object[V any, PV json.ValueReadWriter[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   V
+	Value   PV
 }
 
 func (o *Object[V, PV]) IsPresent() bool {
@@ -21,7 +21,7 @@ func (o *Object[V, PV]) IsValid() bool {
 	return o.Valid
 }
 
-func (o *Object[V, PV]) Set(value V) {
+func (o *Object[V, PV]) Set(value PV) {
 	*o = Object[V, PV]{
 		Present: true,
 		Defined: true,
@@ -39,7 +39,7 @@ func (o *Object[V, PV]) SetNull() {
 func (o *Object[V, PV]) WriteJSON(w *json.Writer) bool {
 	if o.Defined {
 		if o.Valid {
-			PV(&o.Value).WriteJSON(w)
+			o.Value.WriteJSON(w)
 		} else {
 			return false
 		}
@@ -62,7 +62,8 @@ func (o *Object[V, PV]) ReadJSON(r *json.Reader) bool {
 
 	o.Defined = true
 
-	if PV(&o.Value).ReadJSON(r) {
+	o.Value = PV(new(V))
+	if o.Value.ReadJSON(r) {
 		r.SkipWhitespace()
 		o.Valid = true
 		return true

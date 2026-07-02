@@ -49,8 +49,8 @@ func (o *Object[V, PV]) validateRaw(value types.Object[V, PV]) []Error {
 	return errorList
 }
 
-func (o *Object[V, PV]) Validate(value types.Object[V, PV]) Result[V] {
-	result := Result[V]{
+func (o *Object[V, PV]) Validate(value types.Object[V, PV]) Result[PV] {
+	result := Result[PV]{
 		Path:    o.Path,
 		Errors:  o.validateRaw(value),
 		Present: value.Present,

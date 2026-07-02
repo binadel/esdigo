@@ -6,7 +6,7 @@ type Array[V any, PV json.ValueReadWriter[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   []V
+	Value   []PV
 }
 
 func (a *Array[V, PV]) IsPresent() bool {
@@ -21,7 +21,7 @@ func (a *Array[V, PV]) IsValid() bool {
 	return a.Valid
 }
 
-func (a *Array[V, PV]) Set(value []V) {
+func (a *Array[V, PV]) Set(value []PV) {
 	*a = Array[V, PV]{
 		Present: true,
 		Defined: true,
@@ -40,11 +40,11 @@ func (a *Array[V, PV]) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
 			w.BeginArray()
-			for i := range a.Value {
+			for i, v := range a.Value {
 				if i > 0 {
 					w.ValueSeparator()
 				}
-				PV(&a.Value[i]).WriteJSON(w)
+				v.WriteJSON(w)
 			}
 			w.EndArray()
 		} else {
@@ -80,8 +80,8 @@ func (a *Array[V, PV]) ReadJSON(r *json.Reader) bool {
 		}
 
 		for {
-			var item V
-			if PV(&item).ReadJSON(r) {
+			item := PV(new(V))
+			if item.ReadJSON(r) {
 				a.Value = append(a.Value, item)
 			} else if r.SkipValue() {
 				skipped = true
