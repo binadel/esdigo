@@ -88,13 +88,12 @@ func (n *Number[V, C]) ReadJSON(r *json.Reader) bool {
 
 	n.Defined = true
 
-	if t, _ := r.PeekType(); t != json.ValueTypeNumber {
-		return r.SkipValue()
+	if t, _ := r.PeekType(); t == json.ValueTypeNumber {
+		var codec C
+		n.Value, n.Valid = codec.decode(r)
+		r.SkipWhitespace()
+		return r.Error() == nil
 	}
 
-	var codec C
-	n.Value, n.Valid = codec.decode(r)
-	r.SkipWhitespace()
-
-	return r.Error() == nil
+	return r.SkipValue()
 }

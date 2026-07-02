@@ -39,14 +39,12 @@ func (a *BooleanArray) SetNull() {
 func (a *BooleanArray) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
-			needsComma := false
 			w.BeginArray()
-			for _, v := range a.Value {
-				if needsComma {
+			for i, v := range a.Value {
+				if i > 0 {
 					w.ValueSeparator()
 				}
 				w.WriteBoolean(v)
-				needsComma = true
 			}
 			w.EndArray()
 		} else {

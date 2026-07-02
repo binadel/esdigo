@@ -39,7 +39,9 @@ func (o *Object[V, PV]) SetNull() {
 func (o *Object[V, PV]) WriteJSON(w *json.Writer) bool {
 	if o.Defined {
 		if o.Valid {
-			o.Value.WriteJSON(w)
+			if ok := o.Value.WriteJSON(w); !ok {
+				return false
+			}
 		} else {
 			return false
 		}
@@ -63,9 +65,8 @@ func (o *Object[V, PV]) ReadJSON(r *json.Reader) bool {
 	o.Defined = true
 
 	o.Value = PV(new(V))
-	if o.Value.ReadJSON(r) {
+	if o.Valid = o.Value.ReadJSON(r); o.Valid {
 		r.SkipWhitespace()
-		o.Valid = true
 		return true
 	}
 

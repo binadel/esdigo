@@ -44,7 +44,9 @@ func (a *Array[V, PV]) WriteJSON(w *json.Writer) bool {
 				if i > 0 {
 					w.ValueSeparator()
 				}
-				v.WriteJSON(w)
+				if ok := v.WriteJSON(w); !ok {
+					return false
+				}
 			}
 			w.EndArray()
 		} else {

@@ -39,7 +39,7 @@ func (a *Any) SetNull() {
 func (a *Any) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
-			if !w.WriteValue(a.Value) {
+			if ok := w.WriteValue(a.Value); !ok {
 				return false
 			}
 		} else {
