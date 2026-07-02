@@ -88,7 +88,7 @@ func (n *Number[V, C]) ReadJSON(r *json.Reader) bool {
 
 	n.Defined = true
 
-	if !r.NextIsNumber() {
+	if t, _ := r.PeekType(); t != json.ValueTypeNumber {
 		return r.SkipValue()
 	}
 

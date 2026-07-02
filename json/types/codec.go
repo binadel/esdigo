@@ -32,7 +32,7 @@ type float interface {
 // parser themselves.
 //
 // The field envelope (Number.ReadJSON) handles null and the not-a-number case
-// (it peeks with NextIsNumber and skips non-numbers), so decode is invoked only
+// (it peeks with PeekType and skips non-numbers), so decode is invoked only
 // when a number token is present and returns whether that number was a valid
 // value for V. A number that is read but not convertible (e.g. "1e3" into a
 // big.Int, or an out-of-range integer) returns false (Valid=false) without a

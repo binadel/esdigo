@@ -107,7 +107,7 @@ func (a *NumberArray[V, C]) ReadJSON(r *json.Reader) bool {
 
 		var codec C
 		for {
-			if r.NextIsNumber() {
+			if t, _ := r.PeekType(); t == json.ValueTypeNumber {
 				if elem, ok := codec.decode(r); ok {
 					a.Value = append(a.Value, elem)
 				} else {

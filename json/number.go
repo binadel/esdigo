@@ -73,18 +73,6 @@ func (w *Writer) WriteBigFloatNumber(value *big.Float) {
 	}
 }
 
-func (r *Reader) NextIsNumber() bool {
-	if r.err != nil {
-		return false
-	}
-	r.SkipWhitespace()
-	if r.pos >= len(r.data) {
-		return false
-	}
-	c := r.data[r.pos]
-	return c == '-' || (c >= '0' && c <= '9')
-}
-
 func (r *Reader) ReadRawNumber() ([]byte, bool) {
 	start := r.pos
 	if r.SkipNumber() {

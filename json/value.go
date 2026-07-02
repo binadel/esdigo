@@ -130,6 +130,40 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 	return value, true
 }
 
+// PeekType reports the type of the next JSON value from its first non-whitespace
+// byte, without consuming input. ok is false at end of input or on a byte that
+// cannot begin a JSON value.
+func (r *Reader) PeekType() (t ValueType, ok bool) {
+	if r.err != nil {
+		return 0, false
+	}
+
+	r.SkipWhitespace()
+
+	if r.pos >= len(r.data) {
+		return 0, false
+	}
+
+	switch c := r.data[r.pos]; {
+	case c == '{':
+		return ValueTypeObject, true
+	case c == '[':
+		return ValueTypeArray, true
+	case c == '"':
+		return ValueTypeString, true
+	case c == 't':
+		return ValueTypeTrue, true
+	case c == 'f':
+		return ValueTypeFalse, true
+	case c == 'n':
+		return ValueTypeNull, true
+	case c == '-' || (c >= '0' && c <= '9'):
+		return ValueTypeNumber, true
+	default:
+		return 0, false
+	}
+}
+
 // SkipValue skips over the next JSON value without constructing it.
 // Returns true if a value was successfully skipped.
 func (r *Reader) SkipValue() bool {
