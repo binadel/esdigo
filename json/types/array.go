@@ -2,27 +2,27 @@ package types
 
 import "github.com/binadel/esdigo/json"
 
-type Array[T json.ValueReadWriter[T]] struct {
+type Array[V any, PV json.ValueReadWriter[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   []T
+	Value   []V
 }
 
-func (a *Array[T]) IsPresent() bool {
+func (a *Array[V, PV]) IsPresent() bool {
 	return a.Present
 }
 
-func (a *Array[T]) IsDefined() bool {
+func (a *Array[V, PV]) IsDefined() bool {
 	return a.Defined
 }
 
-func (a *Array[T]) IsValid() bool {
+func (a *Array[V, PV]) IsValid() bool {
 	return a.Valid
 }
 
-func (a *Array[T]) Set(value []T) {
-	*a = Array[T]{
+func (a *Array[V, PV]) Set(value []V) {
+	*a = Array[V, PV]{
 		Present: true,
 		Defined: true,
 		Valid:   true,
@@ -30,21 +30,21 @@ func (a *Array[T]) Set(value []T) {
 	}
 }
 
-func (a *Array[T]) SetNull() {
-	*a = Array[T]{
+func (a *Array[V, PV]) SetNull() {
+	*a = Array[V, PV]{
 		Present: true,
 	}
 }
 
-func (a *Array[T]) WriteJSON(w *json.Writer) bool {
+func (a *Array[V, PV]) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
 			w.BeginArray()
-			for i, v := range a.Value {
+			for i := range a.Value {
 				if i > 0 {
 					w.ValueSeparator()
 				}
-				v.WriteJSON(w)
+				PV(&a.Value[i]).WriteJSON(w)
 			}
 			w.EndArray()
 		} else {
@@ -56,8 +56,8 @@ func (a *Array[T]) WriteJSON(w *json.Writer) bool {
 	return true
 }
 
-func (a *Array[T]) ReadJSON(r *json.Reader) bool {
-	*a = Array[T]{
+func (a *Array[V, PV]) ReadJSON(r *json.Reader) bool {
+	*a = Array[V, PV]{
 		Present: true,
 	}
 
@@ -79,10 +79,9 @@ func (a *Array[T]) ReadJSON(r *json.Reader) bool {
 			return true
 		}
 
-		var factory T
 		for {
-			item := factory.CreateValue()
-			if item.ReadJSON(r) {
+			var item V
+			if PV(&item).ReadJSON(r) {
 				a.Value = append(a.Value, item)
 			} else if r.SkipValue() {
 				skipped = true

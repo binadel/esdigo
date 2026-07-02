@@ -6,29 +6,29 @@ import (
 	"github.com/binadel/esdigo/validation/errors"
 )
 
-type Object[T json.ValueReadWriter[T]] struct {
+type Object[V any, PV json.ValueReadWriter[V]] struct {
 	Path     FieldPath
 	required bool
 	notNull  bool
 }
 
-func NewObject[T json.ValueReadWriter[T]](path ...string) *Object[T] {
-	return &Object[T]{
+func NewObject[V any, PV json.ValueReadWriter[V]](path ...string) *Object[V, PV] {
+	return &Object[V, PV]{
 		Path: Field(path),
 	}
 }
 
-func (o *Object[T]) Required() *Object[T] {
+func (o *Object[V, PV]) Required() *Object[V, PV] {
 	o.required = true
 	return o
 }
 
-func (o *Object[T]) NotNull() *Object[T] {
+func (o *Object[V, PV]) NotNull() *Object[V, PV] {
 	o.notNull = true
 	return o
 }
 
-func (o *Object[T]) validateRaw(value types.Object[T]) []Error {
+func (o *Object[V, PV]) validateRaw(value types.Object[V, PV]) []Error {
 	var errorList []Error
 
 	if o.required && !value.Present {
@@ -49,8 +49,8 @@ func (o *Object[T]) validateRaw(value types.Object[T]) []Error {
 	return errorList
 }
 
-func (o *Object[T]) Validate(value types.Object[T]) Result[T] {
-	result := Result[T]{
+func (o *Object[V, PV]) Validate(value types.Object[V, PV]) Result[V] {
+	result := Result[V]{
 		Path:    o.Path,
 		Errors:  o.validateRaw(value),
 		Present: value.Present,

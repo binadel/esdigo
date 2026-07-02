@@ -2,27 +2,27 @@ package types
 
 import "github.com/binadel/esdigo/json"
 
-type Object[T json.ValueReadWriter[T]] struct {
+type Object[V any, PV json.ValueReadWriter[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   T
+	Value   V
 }
 
-func (o Object[T]) IsPresent() bool {
+func (o *Object[V, PV]) IsPresent() bool {
 	return o.Present
 }
 
-func (o Object[T]) IsDefined() bool {
+func (o *Object[V, PV]) IsDefined() bool {
 	return o.Defined
 }
 
-func (o Object[T]) IsValid() bool {
+func (o *Object[V, PV]) IsValid() bool {
 	return o.Valid
 }
 
-func (o *Object[T]) Set(value T) {
-	*o = Object[T]{
+func (o *Object[V, PV]) Set(value V) {
+	*o = Object[V, PV]{
 		Present: true,
 		Defined: true,
 		Valid:   true,
@@ -30,16 +30,16 @@ func (o *Object[T]) Set(value T) {
 	}
 }
 
-func (o *Object[T]) SetNull() {
-	*o = Object[T]{
+func (o *Object[V, PV]) SetNull() {
+	*o = Object[V, PV]{
 		Present: true,
 	}
 }
 
-func (o Object[T]) WriteJSON(w *json.Writer) bool {
+func (o *Object[V, PV]) WriteJSON(w *json.Writer) bool {
 	if o.Defined {
 		if o.Valid {
-			o.Value.WriteJSON(w)
+			PV(&o.Value).WriteJSON(w)
 		} else {
 			return false
 		}
@@ -49,8 +49,8 @@ func (o Object[T]) WriteJSON(w *json.Writer) bool {
 	return true
 }
 
-func (o *Object[T]) ReadJSON(r *json.Reader) bool {
-	*o = Object[T]{
+func (o *Object[V, PV]) ReadJSON(r *json.Reader) bool {
+	*o = Object[V, PV]{
 		Present: true,
 	}
 
@@ -62,8 +62,7 @@ func (o *Object[T]) ReadJSON(r *json.Reader) bool {
 
 	o.Defined = true
 
-	o.Value = o.Value.CreateValue()
-	if o.Value.ReadJSON(r) {
+	if PV(&o.Value).ReadJSON(r) {
 		r.SkipWhitespace()
 		o.Valid = true
 		return true

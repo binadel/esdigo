@@ -16,10 +16,6 @@ type Product struct {
 	Email       types.String
 }
 
-func (p *Product) CreateValue() *Product {
-	return &Product{}
-}
-
 func (p *Product) MarshalJSON() ([]byte, error) {
 	w := json.NewWriter(128)
 	p.WriteJSON(w)

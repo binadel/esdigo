@@ -6,7 +6,7 @@ import (
 )
 
 type ProductResponse struct {
-	Product types.Object[*Product] `json:"product"`
+	Product types.Object[Product, *Product] `json:"product"`
 }
 
 func (p *ProductResponse) MarshalJSON() ([]byte, error) {
