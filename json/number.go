@@ -1,6 +1,7 @@
 package json
 
 import (
+	"encoding/binary"
 	"math"
 	"math/big"
 	"strconv"
@@ -252,6 +253,30 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	return value, true
 }
 
+// isEightDigits reports whether all 8 bytes of a little-endian word are ASCII
+// digits ('0'-'9'). It is exact: a byte b qualifies iff its high nibble is 3 and
+// b+6 still has high nibble 3 (i.e. its low nibble is <= 9), so the folded value
+// equals 0x33 in every lane exactly when all eight bytes are digits.
+func isEightDigits(word uint64) bool {
+	return (word&0xf0f0f0f0f0f0f0f0)|(((word+0x0606060606060606)&0xf0f0f0f0f0f0f0f0)>>4) == 0x3333333333333333
+}
+
+// skipDigits returns the index of the first non-digit byte in b (or len(b)),
+// scanning eight bytes at a time.
+func skipDigits(b []byte) int {
+	i, n := 0, len(b)
+	for i+8 <= n && isEightDigits(binary.LittleEndian.Uint64(b[i:])) {
+		i += 8
+	}
+	for i < n {
+		if c := b[i]; c < '0' || c > '9' {
+			return i
+		}
+		i++
+	}
+	return n
+}
+
 func (r *Reader) SkipNumber() (ok bool) {
 	if r.err != nil {
 		return
@@ -283,13 +308,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 		}
 	} else if c >= '1' && c <= '9' {
 		r.pos++
-		for r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.pos++
-			} else {
-				break
-			}
-		}
+		r.pos += skipDigits(r.data[r.pos:])
 	} else {
 		if negative {
 			r.SetSyntaxError("expected digit after minus sign in number")
@@ -310,13 +329,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 			return
 		}
 		r.pos++
-		for r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.pos++
-			} else {
-				break
-			}
-		}
+		r.pos += skipDigits(r.data[r.pos:])
 	}
 
 	// exponent part
@@ -340,13 +353,7 @@ func (r *Reader) SkipNumber() (ok bool) {
 			return
 		}
 		r.pos++
-		for r.pos < len(r.data) {
-			if c := r.data[r.pos]; c >= '0' && c <= '9' {
-				r.pos++
-			} else {
-				break
-			}
-		}
+		r.pos += skipDigits(r.data[r.pos:])
 	}
 
 	return true

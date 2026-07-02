@@ -81,6 +81,7 @@ func (r *Reader) ReadObject() (map[string]Value, bool) {
 						object[name] = value
 					} else {
 						r.SetSyntaxError("expected a value after name-separator ':'")
+						return nil, false
 					}
 				} else {
 					r.SetSyntaxError("expected a name-separator ':' after name")
@@ -95,6 +96,8 @@ func (r *Reader) ReadObject() (map[string]Value, bool) {
 					r.SetSyntaxError("expected either end-object '}' or value-separator ','")
 					return nil, false
 				}
+
+				r.SkipWhitespace()
 			} else {
 				r.SetSyntaxError("expected a name after begin-object '{' or value-separator ','")
 				return nil, false
@@ -126,6 +129,8 @@ func (r *Reader) SkipObject() bool {
 					r.SetSyntaxError("expected a name-separator ':' after name")
 					return false
 				}
+
+				r.SkipWhitespace()
 
 				if r.EndObject() {
 					return true
