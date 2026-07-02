@@ -155,11 +155,11 @@ func (bigIntCodec) decode(r *json.Reader) (*big.Int, bool) {
 	if !ok {
 		return nil, false
 	}
-	z, ok := new(big.Int).SetString(utils.UnsafeString(token), 10)
-	if !ok {
+	rat, ok := new(big.Rat).SetString(utils.UnsafeString(token))
+	if !ok || !rat.IsInt() {
 		return nil, false
 	}
-	return z, true
+	return rat.Num(), true
 }
 
 func (bigIntCodec) write(w *json.Writer, v *big.Int) {
