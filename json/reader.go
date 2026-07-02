@@ -1,6 +1,10 @@
 package json
 
-import "fmt"
+import (
+	"encoding/binary"
+	"fmt"
+	"math/bits"
+)
 
 // Reader parses JSON from a byte slice. It maintains a position and an error;
 // once an error is set, all read methods return failure and no new error is set.
@@ -87,19 +91,60 @@ func (r *Reader) ReadJSON() (Value, error) {
 	return value, nil
 }
 
-// SkipWhitespace advances past JSON whitespace characters.
-// This is a hot-path function and avoids unnecessary bounds checks.
-func (r *Reader) SkipWhitespace() {
-	data := r.data
-	pos := r.pos
+// zeroLanes sets the high (0x80) bit of every 8-byte lane whose byte is exactly
+// 0x00, and clears all other bits. Unlike the shorter (x-ones)&^x&0x80 form it is
+// EXACT per lane: masking each byte to 7 bits before the add stops a byte's carry
+// from leaking into the next lane, so there are no false positives.
+func zeroLanes(x uint64) uint64 {
+	const lo7 = uint64(0x7f7f7f7f7f7f7f7f)
+	const high = uint64(0x8080808080808080)
+	// (low7 + 0x7f) sets a lane's high bit iff its low 7 bits are non-zero; OR-ing
+	// x folds bit 7 back in, so the high bit ends up set iff the byte is non-zero.
+	y := (x & lo7) + lo7
+	return ^(y | x | lo7) & high
+}
 
-	if pos < len(data) && data[pos] > ' ' {
+// nonWhitespace sets the high bit of each lane of an 8-byte little-endian word
+// whose byte is NOT JSON whitespace (space, tab, LF, CR). Membership must be exact
+// (a false positive would skip a real token byte), so it uses zeroLanes rather
+// than the cheaper string scanner.
+func nonWhitespace(word uint64) uint64 {
+	const high = uint64(0x8080808080808080)
+	isWS := zeroLanes(word^0x2020202020202020) | // ' '
+		zeroLanes(word^0x0909090909090909) | // '\t'
+		zeroLanes(word^0x0a0a0a0a0a0a0a0a) | // '\n'
+		zeroLanes(word^0x0d0d0d0d0d0d0d0d) // '\r'
+	return isWS ^ high
+}
+
+// SkipWhitespace advances past JSON whitespace (space, tab, LF, CR). The common
+// "already at a token" case is a tiny inlinable check; the whitespace-skipping
+// work lives in skipWhitespace so this wrapper stays inlinable in hot callers.
+func (r *Reader) SkipWhitespace() {
+	if r.pos < len(r.data) && r.data[r.pos] > ' ' {
 		return
 	}
+	r.skipWhitespace()
+}
 
-	for pos < len(data) {
+func (r *Reader) skipWhitespace() {
+	data := r.data
+	pos := r.pos
+	n := len(data)
+
+	// SWAR: skip eight whitespace bytes at a time
+	for pos+8 <= n {
+		if mask := nonWhitespace(binary.LittleEndian.Uint64(data[pos:])); mask != 0 {
+			r.pos = pos + bits.TrailingZeros64(mask)>>3
+			return
+		}
+		pos += 8
+	}
+
+	// byte-by-byte tail
+	for pos < n {
 		c := data[pos]
-		if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
+		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
 			break
 		}
 		pos++
