@@ -62,10 +62,8 @@ func (b *Boolean) ReadJSON(r *json.Reader) bool {
 
 	b.Defined = true
 
-	if value, ok := r.ReadBoolean(); ok {
+	if b.Value, b.Valid = r.ReadBoolean(); b.Valid {
 		r.SkipWhitespace()
-		b.Valid = true
-		b.Value = value
 		return true
 	}
 

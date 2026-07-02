@@ -1,59 +1,76 @@
 package types
 
 import (
-	"strconv"
+	"math/big"
 
 	"github.com/binadel/esdigo/json"
 )
 
-// NumberArray is a flat array of JSON numbers held as their raw token bytes,
-// which is lossless for values of any magnitude or precision. Each element
-// aliases the input buffer on read (zero-copy), like the other raw types here,
-// so it is valid only while the source bytes live unmodified.
-type NumberArray struct {
+type (
+	IntArray    = NumberArray[int, scalarInt[int]]
+	Int8Array   = NumberArray[int8, scalarInt[int8]]
+	Int16Array  = NumberArray[int16, scalarInt[int16]]
+	Int32Array  = NumberArray[int32, scalarInt[int32]]
+	Int64Array  = NumberArray[int64, scalarInt[int64]]
+	UIntArray   = NumberArray[uint, scalarInt[uint]]
+	UInt8Array  = NumberArray[uint8, scalarInt[uint8]]
+	UInt16Array = NumberArray[uint16, scalarInt[uint16]]
+	UInt32Array = NumberArray[uint32, scalarInt[uint32]]
+	UInt64Array = NumberArray[uint64, scalarInt[uint64]]
+
+	Float32Array = NumberArray[float32, scalarFloat[float32]]
+	Float64Array = NumberArray[float64, scalarFloat[float64]]
+
+	BigIntArray   = NumberArray[*big.Int, bigIntCodec]
+	BigFloatArray = NumberArray[*big.Float, bigFloatCodec]
+
+	RawNumberArray = NumberArray[[]byte, rawCodec]
+)
+
+type NumberArray[V any, C numberCodec[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
-	Value   [][]byte
+	Value   []V
 }
 
-func (a *NumberArray) IsPresent() bool { return a.Present }
-func (a *NumberArray) IsDefined() bool { return a.Defined }
-func (a *NumberArray) IsValid() bool   { return a.Valid }
-
-func (a *NumberArray) Set(value [][]byte) {
-	*a = NumberArray{Present: true, Defined: true, Valid: true, Value: value}
+func (a *NumberArray[V, C]) IsPresent() bool {
+	return a.Present
 }
 
-func (a *NumberArray) SetIntArray(value []int64) {
-	out := make([][]byte, len(value))
-	for i, v := range value {
-		out[i] = strconv.AppendInt(nil, v, 10)
+func (a *NumberArray[V, C]) IsDefined() bool {
+	return a.Defined
+}
+
+func (a *NumberArray[V, C]) IsValid() bool {
+	return a.Valid
+}
+
+func (a *NumberArray[V, C]) Set(value []V) {
+	*a = NumberArray[V, C]{
+		Present: true,
+		Defined: true,
+		Valid:   true,
+		Value:   value,
 	}
-	*a = NumberArray{Present: true, Defined: true, Valid: true, Value: out}
 }
 
-func (a *NumberArray) SetUIntArray(value []uint64) {
-	out := make([][]byte, len(value))
-	for i, v := range value {
-		out[i] = strconv.AppendUint(nil, v, 10)
+func (a *NumberArray[V, C]) SetNull() {
+	*a = NumberArray[V, C]{
+		Present: true,
 	}
-	*a = NumberArray{Present: true, Defined: true, Valid: true, Value: out}
 }
 
-func (a *NumberArray) SetNull() {
-	*a = NumberArray{Present: true}
-}
-
-func (a *NumberArray) WriteJSON(w *json.Writer) bool {
+func (a *NumberArray[V, C]) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
+			var codec C
 			w.BeginArray()
 			for i, v := range a.Value {
 				if i > 0 {
 					w.ValueSeparator()
 				}
-				w.WriteRawNumber(v)
+				codec.write(w, v)
 			}
 			w.EndArray()
 		} else {
@@ -65,8 +82,10 @@ func (a *NumberArray) WriteJSON(w *json.Writer) bool {
 	return true
 }
 
-func (a *NumberArray) ReadJSON(r *json.Reader) bool {
-	*a = NumberArray{Present: true}
+func (a *NumberArray[V, C]) ReadJSON(r *json.Reader) bool {
+	*a = NumberArray[V, C]{
+		Present: true,
+	}
 
 	r.SkipWhitespace()
 
@@ -86,9 +105,14 @@ func (a *NumberArray) ReadJSON(r *json.Reader) bool {
 			return true
 		}
 
+		var codec C
 		for {
-			if value, ok := r.ReadRawNumber(); ok {
-				a.Value = append(a.Value, value)
+			if r.NextIsNumber() {
+				if elem, ok := codec.decode(r); ok {
+					a.Value = append(a.Value, elem)
+				} else {
+					skipped = true
+				}
 			} else if r.SkipValue() {
 				skipped = true
 			} else {

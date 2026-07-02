@@ -43,23 +43,19 @@ type float interface {
 // the set of number backings is closed to this package, and callers select one
 // through the exported aliases (Int64, UInt64, BigInt, RawNumber, Float64, ...).
 type numberCodec[V any] interface {
-	decode(r *json.Reader, dst *V) bool
+	decode(r *json.Reader) (V, bool)
 	write(w *json.Writer, v V)
 }
 
 type scalarInt[T integer] struct{}
 
-func (scalarInt[T]) decode(r *json.Reader, dst *T) bool {
+func (scalarInt[T]) decode(r *json.Reader) (T, bool) {
 	num, ok := r.ReadNumber()
 	if !ok {
-		return false
+		var zero T
+		return zero, false
 	}
-	v, ok := intFromNumber[T](num)
-	if !ok {
-		return false
-	}
-	*dst = v
-	return true
+	return intFromNumber[T](num)
 }
 
 func (scalarInt[T]) write(w *json.Writer, v T) {
@@ -130,18 +126,17 @@ func intFromNumber[T integer](num json.NumberValue) (value T, ok bool) {
 
 type scalarFloat[T float] struct{}
 
-func (scalarFloat[T]) decode(r *json.Reader, dst *T) bool {
+func (scalarFloat[T]) decode(r *json.Reader) (T, bool) {
+	var zero T
 	token, ok := r.ReadRawNumber()
 	if !ok {
-		return false
+		return zero, false
 	}
-	var zero T
 	f, err := strconv.ParseFloat(utils.UnsafeString(token), int(unsafe.Sizeof(zero))*8)
 	if err != nil {
-		return false
+		return zero, false
 	}
-	*dst = T(f)
-	return true
+	return T(f), true
 }
 
 func (scalarFloat[T]) write(w *json.Writer, v T) {
@@ -155,17 +150,16 @@ func (scalarFloat[T]) write(w *json.Writer, v T) {
 
 type bigIntCodec struct{}
 
-func (bigIntCodec) decode(r *json.Reader, dst **big.Int) bool {
+func (bigIntCodec) decode(r *json.Reader) (*big.Int, bool) {
 	token, ok := r.ReadRawNumber()
 	if !ok {
-		return false
+		return nil, false
 	}
 	z, ok := new(big.Int).SetString(utils.UnsafeString(token), 10)
 	if !ok {
-		return false
+		return nil, false
 	}
-	*dst = z
-	return true
+	return z, true
 }
 
 func (bigIntCodec) write(w *json.Writer, v *big.Int) {
@@ -174,10 +168,10 @@ func (bigIntCodec) write(w *json.Writer, v *big.Int) {
 
 type bigFloatCodec struct{}
 
-func (bigFloatCodec) decode(r *json.Reader, dst **big.Float) bool {
+func (bigFloatCodec) decode(r *json.Reader) (*big.Float, bool) {
 	token, ok := r.ReadRawNumber()
 	if !ok {
-		return false
+		return nil, false
 	}
 	// give the mantissa enough bits to hold every digit of the literal
 	// (~3.33 bits per decimal digit; 4 is a safe upper bound).
@@ -187,10 +181,9 @@ func (bigFloatCodec) decode(r *json.Reader, dst **big.Float) bool {
 	}
 	f, _, err := big.ParseFloat(utils.UnsafeString(token), 10, precision, big.ToNearestEven)
 	if err != nil {
-		return false
+		return nil, false
 	}
-	*dst = f
-	return true
+	return f, true
 }
 
 func (bigFloatCodec) write(w *json.Writer, v *big.Float) {
@@ -199,13 +192,8 @@ func (bigFloatCodec) write(w *json.Writer, v *big.Float) {
 
 type rawCodec struct{}
 
-func (rawCodec) decode(r *json.Reader, dst *[]byte) bool {
-	token, ok := r.ReadRawNumber()
-	if !ok {
-		return false
-	}
-	*dst = token
-	return true
+func (rawCodec) decode(r *json.Reader) ([]byte, bool) {
+	return r.ReadRawNumber()
 }
 
 func (rawCodec) write(w *json.Writer, v []byte) {
