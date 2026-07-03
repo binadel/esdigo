@@ -16,7 +16,17 @@ const (
 	NumberTypeInteger = NumberType(iota)
 	NumberTypeReal
 	NumberTypeBig
+	// NumberTypeOverflow marks a number whose decimal magnitude (integer digits +
+	// exponent) exceeds maxNumberDigits — too large to materialize as an exact
+	// integer/rational. The parser flags it so codecs can reject without
+	// re-scanning the token (a big.Rat built from it would exhaust memory).
+	NumberTypeOverflow
 )
+
+// maxNumberDigits bounds the decimal magnitude a number may have before the
+// parser classifies it NumberTypeOverflow. 65536 digits (~217 kbit) dwarfs any
+// real integer while catching amplification such as "1e999999999".
+const maxNumberDigits = 1 << 16
 
 type NumberValue struct {
 	Negative    bool
@@ -82,7 +92,7 @@ func (r *Reader) ReadRawNumber() ([]byte, bool) {
 	return nil, false
 }
 
-func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
+func (r *Reader) ReadNumber() (value NumberValue, raw []byte, ok bool) {
 	if r.err != nil {
 		return
 	}
@@ -91,6 +101,8 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		r.SetEofError()
 		return
 	}
+
+	start := r.pos
 
 	// minus sign
 	value.Negative = r.data[r.pos] == '-'
@@ -104,11 +116,14 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 
 	var coefficient uint64
 	var exponent int
+	var explicitExp int
 	var trailingZeros int
+	var intDigits int
 	var big bool
 
 	// integer part
 	if digit := uint64(r.data[r.pos] - '0'); digit == 0 {
+		intDigits = 1
 		r.pos++
 		if r.pos < len(r.data) {
 			if c := r.data[r.pos]; c >= '0' && c <= '9' {
@@ -118,10 +133,12 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		}
 	} else if digit <= 9 {
 		coefficient = digit
+		intDigits = 1
 		r.pos++
 
 		for r.pos < len(r.data) {
 			if digit := uint64(r.data[r.pos] - '0'); digit <= 9 {
+				intDigits++
 				if coefficient < uint64MaxCutoff || (digit < 6 && coefficient == uint64MaxCutoff) {
 					coefficient = coefficient*10 + digit
 					if digit == 0 {
@@ -221,10 +238,26 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 		}
 
 		if negExp {
+			explicitExp = -int(exp)
 			exponent -= int(exp)
 		} else {
+			explicitExp = int(exp)
 			exponent += int(exp)
 		}
+	}
+
+	// magnitude guard: the materialized value spans roughly intDigits + |explicit
+	// exponent| decimal digits; beyond maxNumberDigits it is flagged Overflow so
+	// codecs reject it without re-scanning (a big.Rat from it would exhaust memory).
+	magnitude := intDigits
+	if explicitExp > 0 {
+		magnitude += explicitExp
+	} else {
+		magnitude -= explicitExp
+	}
+	if magnitude > maxNumberDigits {
+		value.Type = NumberTypeOverflow
+		return value, r.data[start:r.pos], true
 	}
 
 	if exponent > math.MaxInt16 || exponent < math.MinInt16 {
@@ -233,7 +266,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 
 	if big {
 		value.Type = NumberTypeBig
-		return value, true
+		return value, r.data[start:r.pos], true
 	}
 
 	value.Exponent = int16(exponent)
@@ -250,7 +283,7 @@ func (r *Reader) ReadNumber() (value NumberValue, ok bool) {
 	value.Exponent = int16(exponent)
 	value.Coefficient = coefficient
 
-	return value, true
+	return value, r.data[start:r.pos], true
 }
 
 // isEightDigits reports whether all 8 bytes of a little-endian word are ASCII

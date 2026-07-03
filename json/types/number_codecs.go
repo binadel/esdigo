@@ -50,7 +50,7 @@ type numberCodec[V any] interface {
 type scalarInt[T integer] struct{}
 
 func (scalarInt[T]) decode(r *json.Reader) (T, bool) {
-	num, ok := r.ReadNumber()
+	num, _, ok := r.ReadNumber()
 	if !ok {
 		var zero T
 		return zero, false
@@ -151,11 +151,12 @@ func (scalarFloat[T]) write(w *json.Writer, v T) {
 type bigIntCodec struct{}
 
 func (bigIntCodec) decode(r *json.Reader) (*big.Int, bool) {
-	token, ok := r.ReadRawNumber()
-	if !ok {
-		return nil, false
-	}
-	if bigIntTokenTooLarge(token) {
+	// ReadNumber classifies the token in its single scan: NumberTypeOverflow means
+	// the magnitude is too large to materialize (DoS guard) — reject without the
+	// codec re-parsing. big.Rat then builds the exact value from the raw token and
+	// its IsInt() enforces JSON Schema's integer rule (rejecting e.g. "1.5").
+	num, token, ok := r.ReadNumber()
+	if !ok || num.Type == json.NumberTypeOverflow {
 		return nil, false
 	}
 	rat, ok := new(big.Rat).SetString(utils.UnsafeString(token))
@@ -163,51 +164,6 @@ func (bigIntCodec) decode(r *json.Reader) (*big.Int, bool) {
 		return nil, false
 	}
 	return rat.Num(), true
-}
-
-// maxBigIntDigits caps a BigInt's decimal size to guard against an
-// allocation-amplification DoS: a tiny token like "1e999999999" would otherwise
-// make big.Rat materialize a ~1-billion-digit numerator (or denominator).
-// 65536 digits (~217 kbit) dwarfs any legitimate integer while staying cheap to
-// reject. (big.Float, used by bigFloatCodec, is safe: its binary exponent is
-// bounded, so a huge exponent yields an error rather than a giant allocation.)
-const maxBigIntDigits = 1 << 16
-
-// bigIntTokenTooLarge reports whether the integer denoted by token would exceed
-// maxBigIntDigits. Its size is the count of integer significant digits plus the
-// exponent magnitude — either exponent sign blows up big.Rat's numerator or its
-// denominator, so the sign is ignored.
-func bigIntTokenTooLarge(token []byte) bool {
-	i, n := 0, len(token)
-	if i < n && token[i] == '-' {
-		i++
-	}
-	intDigits := 0
-	for i < n && token[i] >= '0' && token[i] <= '9' {
-		intDigits++
-		i++
-	}
-	if i < n && token[i] == '.' { // fraction digits shrink, never grow, the value
-		i++
-		for i < n && token[i] >= '0' && token[i] <= '9' {
-			i++
-		}
-	}
-	exp := 0
-	if i < n && (token[i]|0x20) == 'e' {
-		i++
-		if i < n && (token[i] == '+' || token[i] == '-') {
-			i++
-		}
-		for i < n && token[i] >= '0' && token[i] <= '9' {
-			exp = exp*10 + int(token[i]-'0')
-			if exp > maxBigIntDigits { // also prevents int overflow on giant exponents
-				return true
-			}
-			i++
-		}
-	}
-	return intDigits+exp > maxBigIntDigits
 }
 
 func (bigIntCodec) write(w *json.Writer, v *big.Int) {

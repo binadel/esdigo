@@ -79,7 +79,7 @@ func TestSkipReadNumberConsistency(t *testing.T) {
 		sok := rs.SkipNumber()
 
 		rr := &Reader{data: data}
-		_, rok := rr.ReadNumber()
+		_, _, rok := rr.ReadNumber()
 
 		if sok != rok {
 			t.Fatalf("%q: SkipNumber ok=%v ReadNumber ok=%v", data, sok, rok)
