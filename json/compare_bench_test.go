@@ -171,7 +171,7 @@ func BenchmarkDOMWrite(b *testing.B) {
 // --- validate: esdigo skip-scan vs stdlib json.Valid ---
 
 func esdigoValidate(data []byte) bool {
-	r := &Reader{data: data}
+	r := NewReader(data)
 	r.SkipWhitespace()
 	if !r.SkipValue() {
 		return false

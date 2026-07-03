@@ -5,9 +5,10 @@ func (w *Writer) BeginObject() {
 	w.data = append(w.data, '{')
 }
 
-// BeginObject attempts to read the JSON begin-object token '{'.
+// BeginObject attempts to read the JSON begin-object token '{'. On success it
+// also records the nesting depth, failing if the maximum depth would be exceeded.
 func (r *Reader) BeginObject() bool {
-	return r.readByte('{')
+	return r.readByte('{') && r.enterDepth()
 }
 
 // EndObject writes the JSON end-object token '}' to the writer buffer.
@@ -15,9 +16,14 @@ func (w *Writer) EndObject() {
 	w.data = append(w.data, '}')
 }
 
-// EndObject attempts to read the JSON end-object token '}'.
+// EndObject attempts to read the JSON end-object token '}', releasing one level
+// of nesting depth when it matches.
 func (r *Reader) EndObject() bool {
-	return r.readByte('}')
+	if r.readByte('}') {
+		r.depth--
+		return true
+	}
+	return false
 }
 
 // NameSeparator writes the JSON name/value separator ':'.

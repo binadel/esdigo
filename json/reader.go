@@ -22,16 +22,30 @@ import (
 // it is malformed. Callers can use case 2 to try another ReadX or report their
 // own error.
 type Reader struct {
-	data []byte
-	pos  int
-	err  error
+	data     []byte
+	pos      int
+	err      error
+	depth    int
+	maxDepth int
 }
+
+// defaultMaxDepth is the object/array nesting limit set by NewReader. The readers
+// descend recursively (one stack frame per level), so an unbounded payload of
+// "[[[[..." would exhaust the goroutine stack — a fatal crash that recover()
+// cannot catch. 128 is far deeper than any realistic schema.
+const defaultMaxDepth = 128
+
+// unlimitedDepth disables the nesting limit (SetMaxDepth with a negative value).
+// depth never reaches it in practice — the stack overflows first — so this is an
+// explicit opt-out, restoring the unbounded-recursion risk.
+const unlimitedDepth = int(^uint(0) >> 1)
 
 // NewReader creates a new Reader over the provided byte slice.
 // The input slice is not copied.
 func NewReader(data []byte) *Reader {
 	return &Reader{
-		data: data,
+		data:     data,
+		maxDepth: defaultMaxDepth,
 	}
 }
 
@@ -47,6 +61,29 @@ func (r *Reader) Reset(data []byte) {
 	r.data = data
 	r.pos = 0
 	r.err = nil
+	r.depth = 0
+}
+
+// SetMaxDepth sets the maximum object/array nesting depth accepted by this
+// Reader: N allows N levels (0 permits only scalars), a negative value disables
+// the limit (unsafe for untrusted input). The setting survives Reset.
+func (r *Reader) SetMaxDepth(n int) {
+	if n < 0 {
+		n = unlimitedDepth
+	}
+	r.maxDepth = n
+}
+
+// enterDepth records descent into a nested container and fails if the nesting
+// limit would be exceeded. It is called by BeginArray/BeginObject, which are the
+// only points where the parser recurses.
+func (r *Reader) enterDepth() bool {
+	if r.depth >= r.maxDepth {
+		r.SetSyntaxError("exceeded maximum nesting depth of %d", r.maxDepth)
+		return false
+	}
+	r.depth++
+	return true
 }
 
 // SetEofError sets an unexpected EOF error if no prior error exists.

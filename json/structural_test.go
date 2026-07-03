@@ -24,7 +24,7 @@ func TestReadObject_Cases(t *testing.T) {
 		`{"":0}`, // empty key
 	}
 	for _, s := range valid {
-		r := &Reader{data: []byte(s)}
+		r := NewReader([]byte(s))
 		obj, ok := r.ReadObject()
 		if !ok || r.err != nil {
 			t.Errorf("ReadObject(%q): ok=%v err=%v, want success", s, ok, r.err)
@@ -52,7 +52,7 @@ func TestReadObject_Cases(t *testing.T) {
 		`{"a":1,"b"}`,
 	}
 	for _, s := range invalid {
-		r := &Reader{data: []byte(s)}
+		r := NewReader([]byte(s))
 		if _, ok := r.ReadObject(); ok && r.err == nil {
 			t.Errorf("ReadObject(%q): accepted, want rejection", s)
 		}
@@ -73,7 +73,7 @@ func TestReadArray_Cases(t *testing.T) {
 		`[{"a":1}, {"b":2}]`,
 	}
 	for _, s := range valid {
-		r := &Reader{data: []byte(s)}
+		r := NewReader([]byte(s))
 		arr, ok := r.ReadArray()
 		if !ok || r.err != nil {
 			t.Errorf("ReadArray(%q): ok=%v err=%v, want success", s, ok, r.err)
@@ -96,7 +96,7 @@ func TestReadArray_Cases(t *testing.T) {
 		`[1,2`,
 	}
 	for _, s := range invalid {
-		r := &Reader{data: []byte(s)}
+		r := NewReader([]byte(s))
 		if _, ok := r.ReadArray(); ok && r.err == nil {
 			t.Errorf("ReadArray(%q): accepted, want rejection", s)
 		}
@@ -222,12 +222,12 @@ func TestStructural_WhitespaceFuzz(t *testing.T) {
 			t.Fatalf("generator emitted invalid JSON: %q", s)
 		}
 
-		r := &Reader{data: []byte(s)}
+		r := NewReader([]byte(s))
 		if _, err := r.ReadJSON(); err != nil {
 			t.Fatalf("ReadJSON rejected valid JSON %q: %v", s, err)
 		}
 
-		rs := &Reader{data: []byte(s)}
+		rs := NewReader([]byte(s))
 		rs.SkipWhitespace()
 		if !rs.SkipValue() {
 			t.Fatalf("SkipValue rejected valid JSON %q: %v", s, rs.err)
@@ -268,7 +268,7 @@ func TestStructural_CorruptionDifferential(t *testing.T) {
 		}
 
 		want := json.Valid(b)
-		r := &Reader{data: b}
+		r := NewReader(b)
 		_, err := r.ReadJSON()
 		got := err == nil
 		if got != want {
