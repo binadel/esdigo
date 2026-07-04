@@ -1,6 +1,14 @@
 package json
 
-// OptionalValue is the tri-state contract shared by the field wrapper types.
+// OptionalValue is the tri-state contract shared by the field wrapper types:
+// Present (the field appeared at all), Defined (it was non-null), and Valid (the
+// value was usable).
+//
+// IsValid()==false is the recoverable counterpart to a *SyntaxError: the value
+// was well-formed JSON but unusable for THIS field — it overflowed, was the wrong
+// type, was out of range, and so on. It never aborts the parse; the enclosing
+// object or array keeps reading its other fields. Only a broken byte stream (a
+// SyntaxError) stops the reader.
 type OptionalValue interface {
 	IsPresent() bool
 	IsDefined() bool

@@ -33,6 +33,11 @@ type Reader struct {
 // descend recursively (one stack frame per level), so an unbounded payload of
 // "[[[[..." would exhaust the goroutine stack — a fatal crash that recover()
 // cannot catch. 128 is far deeper than any realistic schema.
+//
+// Exceeding it is a fatal reader error (KindDepthLimit), not a recoverable
+// Valid=false: unlike an oversized number (a flat token the reader can skip and
+// mark the field invalid), a too-deep structure cannot be skipped — skipping it
+// still recurses into it — so the only safe response is to stop.
 const defaultMaxDepth = 128
 
 // unlimitedDepth disables the nesting limit (SetMaxDepth with a negative value).
@@ -79,25 +84,37 @@ func (r *Reader) SetMaxDepth(n int) {
 // only points where the parser recurses.
 func (r *Reader) enterDepth() bool {
 	if r.depth >= r.maxDepth {
-		r.SetSyntaxError("exceeded maximum nesting depth of %d", r.maxDepth)
+		r.setError(KindDepthLimit, fmt.Sprintf("exceeded maximum nesting depth of %d", r.maxDepth))
 		return false
 	}
 	r.depth++
 	return true
 }
 
-// SetEofError sets an unexpected EOF error if no prior error exists.
-func (r *Reader) SetEofError() {
+// setError records a parse failure of the given kind at the current offset,
+// if no prior error exists.
+func (r *Reader) setError(kind ErrorKind, message string) {
 	if r.err == nil {
-		r.err = ErrUnexpectedEOF
+		r.err = &SyntaxError{
+			Kind:    kind,
+			Message: message,
+			Offset:  r.pos,
+		}
 	}
 }
 
-// SetSyntaxError records a syntax error at the current offset.
-// The error is only set if no prior error exists.
+// SetEofError records an unexpected end of input (KindTruncated) if no prior
+// error exists.
+func (r *Reader) SetEofError() {
+	r.setError(KindTruncated, "unexpected end of json input")
+}
+
+// SetSyntaxError records a malformed-input error (KindSyntax) at the current
+// offset. The error is only set if no prior error exists.
 func (r *Reader) SetSyntaxError(format string, args ...any) {
 	if r.err == nil {
 		r.err = &SyntaxError{
+			Kind:    KindSyntax,
 			Message: fmt.Sprintf(format, args...),
 			Offset:  r.pos,
 		}

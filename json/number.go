@@ -20,6 +20,13 @@ const (
 	// exponent) exceeds maxNumberDigits — too large to materialize as an exact
 	// integer/rational. The parser flags it so codecs can reject without
 	// re-scanning the token (a big.Rat built from it would exhaust memory).
+	//
+	// This is a flag, NOT a parse error: a number token is flat, so reading or
+	// skipping it is always safe — only the big.Int/big.Rat conversion is
+	// dangerous, and the codec simply declines that (Valid=false) while parsing
+	// continues. Contrast the nesting-depth limit, which MUST abort as a reader
+	// error because a too-deep structure cannot be skipped without recursing into
+	// it. Same "resource limit" idea, opposite tiers — for that reason.
 	NumberTypeOverflow
 )
 
