@@ -12,6 +12,9 @@ const (
 	ParamKeyLength           = `,"length":`
 	ParamKeyMinLength        = `,"minLength":`
 	ParamKeyMaxLength        = `,"maxLength":`
+	ParamKeyExactItems       = `,"exactItems":`
+	ParamKeyMinItems         = `,"minItems":`
+	ParamKeyMaxItems         = `,"maxItems":`
 	ParamKeyVersion          = `,"version":`
 )
 

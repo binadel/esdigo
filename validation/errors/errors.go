@@ -50,17 +50,17 @@ var (
 
 	Length = BasicError{
 		Code:    rules.Length,
-		Message: "value length must be equal to {{length}}",
+		Message: "value must have the exact length",
 	}
 
 	MinLength = BasicError{
 		Code:    rules.MinLength,
-		Message: "value length must be at least {{minLength}}",
+		Message: "value must be at least the minimum length",
 	}
 
 	MaxLength = BasicError{
 		Code:    rules.MaxLength,
-		Message: "value length must be at most {{maxLength}}",
+		Message: "value must be at most the maximum length",
 	}
 
 	Pattern = &BasicError{
@@ -125,22 +125,22 @@ var (
 
 	UuidVersion = BasicError{
 		Code:    rules.UuidVersion,
-		Message: "value must be a valid UUID version {{version}}",
+		Message: "value must be a UUID of the required version",
 	}
 
 	ExactItems = BasicError{
 		Code:    rules.ExactItems,
-		Message: "value must contain exactly {{count}} items",
+		Message: "value must contain exactly the required number of items",
 	}
 
 	MinItems = BasicError{
 		Code:    rules.MinItems,
-		Message: "value must contain minimum {{count}} items",
+		Message: "value must contain at least the minimum number of items",
 	}
 
 	MaxItems = BasicError{
 		Code:    rules.MaxItems,
-		Message: "value must contain maximum {{count}} items",
+		Message: "value must contain at most the maximum number of items",
 	}
 
 	Minimum = BasicError{

@@ -42,7 +42,11 @@ func (o *Object[V, PV]) validateRaw(value types.Object[V, PV]) []Error {
 	}
 
 	if !value.Valid {
-		errorList = append(errorList, errors.InvalidString)
+		// A defined value that isn't an object is the wrong type; a null (not
+		// defined) that reached here is allowed and produces no error.
+		if value.Defined {
+			errorList = append(errorList, errors.InvalidObject)
+		}
 		return errorList
 	}
 

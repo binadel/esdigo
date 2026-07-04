@@ -7,12 +7,15 @@ import (
 )
 
 type Array[V any, PV json.ValueReadWriter[V]] struct {
-	Path       FieldPath
-	required   bool
-	notNull    bool
-	exactItems int
-	minItems   int
-	maxItems   int
+	Path          FieldPath
+	required      bool
+	notNull       bool
+	hasExactItems bool
+	hasMinItems   bool
+	hasMaxItems   bool
+	exactItems    int
+	minItems      int
+	maxItems      int
 }
 
 func NewArray[V any, PV json.ValueReadWriter[V]](path ...string) *Array[V, PV] {
@@ -32,17 +35,17 @@ func (a *Array[V, PV]) NotNull() *Array[V, PV] {
 }
 
 func (a *Array[V, PV]) ExactItems(exactItems int) *Array[V, PV] {
-	a.exactItems = exactItems
+	a.hasExactItems, a.exactItems = true, exactItems
 	return a
 }
 
 func (a *Array[V, PV]) MinItems(minItems int) *Array[V, PV] {
-	a.minItems = minItems
+	a.hasMinItems, a.minItems = true, minItems
 	return a
 }
 
 func (a *Array[V, PV]) MaxItems(maxItems int) *Array[V, PV] {
-	a.maxItems = maxItems
+	a.hasMaxItems, a.maxItems = true, maxItems
 	return a
 }
 
@@ -60,15 +63,39 @@ func (a *Array[V, PV]) validateRaw(value types.Array[V, PV]) []Error {
 	}
 
 	if !value.Valid {
-		errorList = append(errorList, errors.InvalidString)
+		// A defined value that isn't an array is the wrong type; a null (not
+		// defined) that reached here is allowed and produces no error.
+		if value.Defined {
+			errorList = append(errorList, errors.InvalidArray)
+		}
 		return errorList
 	}
 
-	//length := len(value.Value)
+	length := len(value.Value)
 
-	//if a.exactItems > 0 && length == a.exactItems {
-	//	errorList = append(errorList, errors.ExactItems)
-	//}
+	if a.hasExactItems && length != a.exactItems {
+		errorList = append(errorList, &errors.IntParamError{
+			BasicError: errors.ExactItems,
+			ParamKey:   errors.ParamKeyExactItems,
+			ParamValue: int64(a.exactItems),
+		})
+	}
+
+	if a.hasMinItems && length < a.minItems {
+		errorList = append(errorList, &errors.IntParamError{
+			BasicError: errors.MinItems,
+			ParamKey:   errors.ParamKeyMinItems,
+			ParamValue: int64(a.minItems),
+		})
+	}
+
+	if a.hasMaxItems && length > a.maxItems {
+		errorList = append(errorList, &errors.IntParamError{
+			BasicError: errors.MaxItems,
+			ParamKey:   errors.ParamKeyMaxItems,
+			ParamValue: int64(a.maxItems),
+		})
+	}
 
 	return errorList
 }
