@@ -1,65 +1,168 @@
 package validation
 
 import (
-	"github.com/binadel/esdigo/json/types"
+	"fmt"
+
+	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/validation/errors"
 )
 
-type Number struct {
+// orderedNumber is the set of scalar number types Number validates. Big numbers
+// (not comparable with <) have their own validators.
+type orderedNumber interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
+		~float32 | ~float64
+}
+
+// numberField is what Number.Validate reads from a decoded numeric wrapper
+// (types.Int64, types.Float64, ...): the tri-state plus the value and the
+// classification of why it may be invalid.
+type numberField[V any] interface {
+	json.OptionalValue
+	Unwrap() (V, json.NumberType)
+}
+
+// Aliases for the scalar backings, mirroring the types wrappers.
+type (
+	Int    = Number[int]
+	Int8   = Number[int8]
+	Int16  = Number[int16]
+	Int32  = Number[int32]
+	Int64  = Number[int64]
+	UInt   = Number[uint]
+	UInt8  = Number[uint8]
+	UInt16 = Number[uint16]
+	UInt32 = Number[uint32]
+	UInt64 = Number[uint64]
+
+	Float32 = Number[float32]
+	Float64 = Number[float64]
+)
+
+// Number validates a decoded numeric field of type V and maps it back to a typed
+// Result[V]. Besides presence/null it enforces the JSON-Schema numeric bounds and,
+// when the value is unusable, reports a precise reason: not a number, not an
+// integer, or out of range (derived from the field's json.NumberType).
+type Number[V orderedNumber] struct {
 	Path     FieldPath
 	required bool
 	notNull  bool
+
+	hasMin, hasMax     bool
+	hasExMin, hasExMax bool
+	min, max           V
+	exMin, exMax       V
 }
 
-func NewNumber(path ...string) *Number {
-	return &Number{
+// NewNumber creates a numeric field validator for V at the given path, e.g.
+// NewNumber[int64]("user", "age").
+func NewNumber[V orderedNumber](path ...string) *Number[V] {
+	return &Number[V]{
 		Path: Field(path),
 	}
 }
 
-func (n *Number) Required() *Number {
+func (n *Number[V]) Required() *Number[V] {
 	n.required = true
 	return n
 }
 
-func (n *Number) NotNull() *Number {
+func (n *Number[V]) NotNull() *Number[V] {
 	n.notNull = true
 	return n
 }
 
-func (n *Number) validateRaw(value types.RawNumber) []Error {
-	var errorList []Error
-
-	if n.required && !value.Present {
-		errorList = append(errorList, errors.Required)
-		return errorList
-	}
-
-	if n.notNull && !value.Defined {
-		errorList = append(errorList, errors.NotNull)
-		return errorList
-	}
-
-	if !value.Valid {
-		errorList = append(errorList, errors.InvalidString)
-		return errorList
-	}
-
-	return errorList
+// Min requires the value to be >= v (JSON-Schema minimum).
+func (n *Number[V]) Min(v V) *Number[V] {
+	n.hasMin, n.min = true, v
+	return n
 }
 
-func (n *Number) Validate(value types.RawNumber) Result[string] {
-	result := Result[string]{
+// Max requires the value to be <= v (JSON-Schema maximum).
+func (n *Number[V]) Max(v V) *Number[V] {
+	n.hasMax, n.max = true, v
+	return n
+}
+
+// ExclusiveMin requires the value to be strictly > v.
+func (n *Number[V]) ExclusiveMin(v V) *Number[V] {
+	n.hasExMin, n.exMin = true, v
+	return n
+}
+
+// ExclusiveMax requires the value to be strictly < v.
+func (n *Number[V]) ExclusiveMax(v V) *Number[V] {
+	n.hasExMax, n.exMax = true, v
+	return n
+}
+
+// Validate checks a decoded numeric field and returns a typed Result. On success
+// Result.Value holds the number; otherwise Result.Errors describes the failure.
+func (n *Number[V]) Validate(field numberField[V]) Result[V] {
+	result := Result[V]{
 		Path:    n.Path,
-		Errors:  n.validateRaw(value),
-		Present: value.Present,
-		Defined: value.Defined,
+		Present: field.IsPresent(),
+		Defined: field.IsDefined(),
 	}
 
-	if !result.IsValid() {
+	if n.required && !field.IsPresent() {
+		result.Errors = append(result.Errors, errors.Required)
+		return result
+	}
+	if n.notNull && !field.IsDefined() {
+		result.Errors = append(result.Errors, errors.NotNull)
+		return result
+	}
+	if !field.IsValid() {
+		// A defined value that isn't a usable number gets a precise reason; a null
+		// (not defined) that reached here is allowed and produces no error.
+		if field.IsDefined() {
+			_, typ := field.Unwrap()
+			result.Errors = append(result.Errors, reasonError(typ))
+		}
 		return result
 	}
 
-	result.Value = string(value.Value)
+	value, _ := field.Unwrap()
+	n.checkBounds(value, &result)
+	if result.IsValid() {
+		result.Value = value
+	}
 	return result
+}
+
+// reasonError turns a number's classification into the matching precise error.
+func reasonError(typ json.NumberType) Error {
+	switch typ {
+	case json.NumberTypeReal:
+		return errors.NotInteger
+	case json.NumberTypeInvalid:
+		return errors.InvalidNumber
+	default: // Big, Overflow, or an integer that didn't fit the target width
+		return errors.OutOfRange
+	}
+}
+
+func (n *Number[V]) checkBounds(value V, result *Result[V]) {
+	if n.hasMin && value < n.min {
+		result.Errors = append(result.Errors, numberBoundError(errors.Minimum, errors.ParamKeyMinimum, n.min))
+	}
+	if n.hasMax && value > n.max {
+		result.Errors = append(result.Errors, numberBoundError(errors.Maximum, errors.ParamKeyMaximum, n.max))
+	}
+	if n.hasExMin && value <= n.exMin {
+		result.Errors = append(result.Errors, numberBoundError(errors.ExclusiveMinimum, errors.ParamKeyExclusiveMinimum, n.exMin))
+	}
+	if n.hasExMax && value >= n.exMax {
+		result.Errors = append(result.Errors, numberBoundError(errors.ExclusiveMaximum, errors.ParamKeyExclusiveMaximum, n.exMax))
+	}
+}
+
+func numberBoundError[V orderedNumber](base errors.BasicError, key string, bound V) Error {
+	return &errors.NumberParamError{
+		BasicError: base,
+		ParamKey:   key,
+		ParamValue: []byte(fmt.Sprintf("%v", bound)),
+	}
 }

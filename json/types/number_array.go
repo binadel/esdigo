@@ -33,7 +33,7 @@ type (
 // Array it stores its elements unboxed in a []V and decodes each with the codec
 // directly, so it is leaner for scalar numbers. It carries the usual tri-state:
 // Present, Defined, and Valid. Use the aliases above.
-type NumberArray[V any, C numberCodec[V]] struct {
+type NumberArray[V any, C NumberCodec[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
@@ -84,7 +84,7 @@ func (a *NumberArray[V, C]) WriteJSON(w *json.Writer) bool {
 				if i > 0 {
 					w.ValueSeparator()
 				}
-				codec.write(w, v)
+				codec.Write(w, v)
 			}
 			w.EndArray()
 		} else {
@@ -126,7 +126,7 @@ func (a *NumberArray[V, C]) ReadJSON(r *json.Reader) bool {
 		var codec C
 		for {
 			if t, _ := r.PeekType(); t == json.ValueTypeNumber {
-				if elem, ok := codec.decode(r); ok {
+				if elem, _, ok := codec.Decode(r); ok {
 					a.Value = append(a.Value, elem)
 				} else {
 					skipped = true

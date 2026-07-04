@@ -23,6 +23,16 @@ var (
 		Message: "field must be a valid number value",
 	}
 
+	NotInteger = &BasicError{
+		Code:    rules.Integer,
+		Message: "field must be an integer",
+	}
+
+	OutOfRange = &BasicError{
+		Code:    rules.OutOfRange,
+		Message: "value is out of the allowed range",
+	}
+
 	InvalidString = &BasicError{
 		Code:    rules.String,
 		Message: "field must be a valid string value",
@@ -131,5 +141,30 @@ var (
 	MaxItems = BasicError{
 		Code:    rules.MaxItems,
 		Message: "value must contain maximum {{count}} items",
+	}
+
+	Minimum = BasicError{
+		Code:    rules.Minimum,
+		Message: "value must be at least the minimum",
+	}
+
+	Maximum = BasicError{
+		Code:    rules.Maximum,
+		Message: "value must be at most the maximum",
+	}
+
+	ExclusiveMinimum = BasicError{
+		Code:    rules.ExclusiveMinimum,
+		Message: "value must be greater than the exclusive minimum",
+	}
+
+	ExclusiveMaximum = BasicError{
+		Code:    rules.ExclusiveMaximum,
+		Message: "value must be less than the exclusive maximum",
+	}
+
+	MultipleOf = BasicError{
+		Code:    rules.MultipleOf,
+		Message: "value must be a multiple of the factor",
 	}
 )

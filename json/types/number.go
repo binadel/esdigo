@@ -31,13 +31,17 @@ type (
 )
 
 // Number is a JSON number field decoded into V by the codec C. V is the Go value
-// type (int64, float64, *big.Int, ...) and C is its numberCodec; use the aliases
-// above rather than naming the pair directly. It carries the usual tri-state:
-// Present, Defined, and Valid. See json.OptionalValue.
-type Number[V any, C numberCodec[V]] struct {
+// type (int64, float64, *big.Int, ...) and C is its NumberCodec; use the aliases
+// above rather than naming the pair directly. It carries the usual tri-state
+// (Present, Defined, Valid; see json.OptionalValue) plus Type — the classification
+// of the value — which lets a consumer tell WHY an invalid field failed (see
+// json.NumberType): Real into an integer, out of range, or NumberTypeInvalid for a
+// value that was not a number at all.
+type Number[V any, C NumberCodec[V]] struct {
 	Present bool
 	Defined bool
 	Valid   bool
+	Type    json.NumberType
 	Value   V
 }
 
@@ -54,6 +58,13 @@ func (n *Number[V, C]) IsDefined() bool {
 // IsValid reports whether the number was read and representable as V.
 func (n *Number[V, C]) IsValid() bool {
 	return n.Valid
+}
+
+// Unwrap returns the value and its classification. It lets a generic consumer
+// (e.g. a validator) read the typed value and the reason a field is invalid
+// without naming the codec.
+func (n *Number[V, C]) Unwrap() (V, json.NumberType) {
+	return n.Value, n.Type
 }
 
 // Set assigns value and marks the field present, defined, and valid.
@@ -79,7 +90,7 @@ func (n *Number[V, C]) WriteJSON(w *json.Writer) bool {
 	if n.Defined {
 		if n.Valid {
 			var codec C
-			codec.write(w, n.Value)
+			codec.Write(w, n.Value)
 		} else {
 			return false
 		}
@@ -90,8 +101,8 @@ func (n *Number[V, C]) WriteJSON(w *json.Writer) bool {
 }
 
 // ReadJSON reads a JSON number (or null) into n. It peeks the value type first: a
-// non-number is skipped and left Valid=false, and only a real number reaches the
-// codec.
+// non-number is skipped and left Valid=false with Type NumberTypeInvalid, and only
+// a real number reaches the codec, which also reports its classification (Type).
 //
 // The number branch returns r.Error()==nil ("the reader can continue"), NOT
 // n.Valid: a number that is read but not representable as V (e.g. "1.5" into an
@@ -112,10 +123,11 @@ func (n *Number[V, C]) ReadJSON(r *json.Reader) bool {
 
 	if t, _ := r.PeekType(); t == json.ValueTypeNumber {
 		var codec C
-		n.Value, n.Valid = codec.decode(r)
+		n.Value, n.Type, n.Valid = codec.Decode(r)
 		r.SkipWhitespace()
 		return r.Error() == nil
 	}
 
+	n.Type = json.NumberTypeInvalid
 	return r.SkipValue()
 }

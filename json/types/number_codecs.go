@@ -28,41 +28,41 @@ type float interface {
 	~float32 | ~float64
 }
 
-// numberCodec is the behavior parameter of Number. It reads one JSON number from
-// the Reader and converts it to/from the in-memory value V using the json
-// package's own scanner (ReadNumber/ReadRawNumber) — types never implement a
-// parser themselves.
+// NumberCodec is the behavior parameter of Number: it reads one JSON number off
+// the Reader and converts it to/from the in-memory value V, using the json
+// package's own scanner — a codec never implements a parser itself. Implementations
+// are zero-size structs, so a codec value carries no state.
 //
-// The field envelope (Number.ReadJSON) handles null and the not-a-number case
-// (it peeks with PeekType and skips non-numbers), so decode is invoked only
-// when a number token is present and returns whether that number was a valid
-// value for V. A number that is read but not convertible (e.g. "1e3" into a
-// big.Int, or an out-of-range integer) returns false (Valid=false) without a
-// spurious skip, because it has already been consumed.
+// Decode is invoked by Number.ReadJSON only when a number token is present (the
+// envelope handles null and the not-a-number case). It returns the converted
+// value, the number's json.NumberType (so the field can report WHY it is invalid —
+// e.g. NumberTypeReal for "1.5" into an integer, or NumberTypeOverflow for a
+// magnitude too large), and whether the number was representable as V. A number
+// read but not convertible yields ok=false with the token already consumed.
 //
-// Implementations are zero-size struct types, so a codec value carries no state
-// and costs nothing to construct. The interface is sealed (unexported methods):
-// the set of number backings is closed to this package, and callers select one
-// through the exported aliases (Int64, UInt64, BigInt, RawNumber, Float64, ...).
-type numberCodec[V any] interface {
-	decode(r *json.Reader) (V, bool)
-	write(w *json.Writer, v V)
+// The interface is exported so clients can define their own codecs for custom
+// number backings; the built-in codecs are selected through the exported aliases
+// (Int64, UInt64, BigInt, RawNumber, Float64, ...).
+type NumberCodec[V any] interface {
+	Decode(r *json.Reader) (V, json.NumberType, bool)
+	Write(w *json.Writer, v V)
 }
 
 // scalarInt decodes a JSON number into a fixed-width integer T from the reader's
 // structured NumberValue — no re-parsing of the token.
 type scalarInt[T integer] struct{}
 
-func (scalarInt[T]) decode(r *json.Reader) (T, bool) {
+func (scalarInt[T]) Decode(r *json.Reader) (T, json.NumberType, bool) {
 	num, _, ok := r.ReadNumber()
 	if !ok {
 		var zero T
-		return zero, false
+		return zero, num.Type, false
 	}
-	return intFromNumber[T](num)
+	v, cok := intFromNumber[T](num)
+	return v, num.Type, cok
 }
 
-func (scalarInt[T]) write(w *json.Writer, v T) {
+func (scalarInt[T]) Write(w *json.Writer, v T) {
 	// zero-1 > zero is true only for unsigned T (it wraps to the max value), so
 	// this selects the signed/unsigned writer at compile time per instantiation.
 	var zero T
@@ -135,20 +135,20 @@ func intFromNumber[T integer](num json.NumberValue) (value T, ok bool) {
 // makes ParseFloat report an error, leaving the field invalid.
 type scalarFloat[T float] struct{}
 
-func (scalarFloat[T]) decode(r *json.Reader) (T, bool) {
+func (scalarFloat[T]) Decode(r *json.Reader) (T, json.NumberType, bool) {
 	var zero T
-	token, ok := r.ReadRawNumber()
+	num, token, ok := r.ReadNumber()
 	if !ok {
-		return zero, false
+		return zero, num.Type, false
 	}
 	f, err := strconv.ParseFloat(utils.UnsafeString(token), int(unsafe.Sizeof(zero))*8)
 	if err != nil {
-		return zero, false
+		return zero, num.Type, false
 	}
-	return T(f), true
+	return T(f), num.Type, true
 }
 
-func (scalarFloat[T]) write(w *json.Writer, v T) {
+func (scalarFloat[T]) Write(w *json.Writer, v T) {
 	var zero T
 	if unsafe.Sizeof(zero) == 4 {
 		w.WriteFloatNumber(float64(v), 32)
@@ -159,23 +159,23 @@ func (scalarFloat[T]) write(w *json.Writer, v T) {
 
 type bigIntCodec struct{}
 
-func (bigIntCodec) decode(r *json.Reader) (*big.Int, bool) {
+func (bigIntCodec) Decode(r *json.Reader) (*big.Int, json.NumberType, bool) {
 	// ReadNumber classifies the token in its single scan: NumberTypeOverflow means
 	// the magnitude is too large to materialize (DoS guard) — reject without the
 	// codec re-parsing. big.Rat then builds the exact value from the raw token and
 	// its IsInt() enforces JSON Schema's integer rule (rejecting e.g. "1.5").
 	num, token, ok := r.ReadNumber()
 	if !ok || num.Type == json.NumberTypeOverflow {
-		return nil, false
+		return nil, num.Type, false
 	}
-	rat, ok := new(big.Rat).SetString(utils.UnsafeString(token))
-	if !ok || !rat.IsInt() {
-		return nil, false
+	rat, rok := new(big.Rat).SetString(utils.UnsafeString(token))
+	if !rok || !rat.IsInt() {
+		return nil, num.Type, false
 	}
-	return rat.Num(), true
+	return rat.Num(), num.Type, true
 }
 
-func (bigIntCodec) write(w *json.Writer, v *big.Int) {
+func (bigIntCodec) Write(w *json.Writer, v *big.Int) {
 	w.WriteBigIntNumber(v)
 }
 
@@ -184,10 +184,10 @@ func (bigIntCodec) write(w *json.Writer, v *big.Int) {
 // out-of-range magnitude yields an error rather than a giant allocation.
 type bigFloatCodec struct{}
 
-func (bigFloatCodec) decode(r *json.Reader) (*big.Float, bool) {
-	token, ok := r.ReadRawNumber()
+func (bigFloatCodec) Decode(r *json.Reader) (*big.Float, json.NumberType, bool) {
+	num, token, ok := r.ReadNumber()
 	if !ok {
-		return nil, false
+		return nil, num.Type, false
 	}
 	// give the mantissa enough bits to hold every digit of the literal
 	// (~3.33 bits per decimal digit; 4 is a safe upper bound).
@@ -197,12 +197,12 @@ func (bigFloatCodec) decode(r *json.Reader) (*big.Float, bool) {
 	}
 	f, _, err := big.ParseFloat(utils.UnsafeString(token), 10, precision, big.ToNearestEven)
 	if err != nil {
-		return nil, false
+		return nil, num.Type, false
 	}
-	return f, true
+	return f, num.Type, true
 }
 
-func (bigFloatCodec) write(w *json.Writer, v *big.Float) {
+func (bigFloatCodec) Write(w *json.Writer, v *big.Float) {
 	w.WriteBigFloatNumber(v)
 }
 
@@ -211,11 +211,15 @@ func (bigFloatCodec) write(w *json.Writer, v *big.Float) {
 // to preserve values that no fixed Go type can hold exactly.
 type rawCodec struct{}
 
-func (rawCodec) decode(r *json.Reader) ([]byte, bool) {
-	return r.ReadRawNumber()
+func (rawCodec) Decode(r *json.Reader) ([]byte, json.NumberType, bool) {
+	num, token, ok := r.ReadNumber()
+	if !ok {
+		return nil, num.Type, false
+	}
+	return token, num.Type, true
 }
 
-func (rawCodec) write(w *json.Writer, v []byte) {
+func (rawCodec) Write(w *json.Writer, v []byte) {
 	if len(v) == 0 { // nothing stored (e.g. a zero-value RawNumber) → null
 		w.WriteNull()
 		return

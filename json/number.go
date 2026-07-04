@@ -10,15 +10,20 @@ import (
 // uint64MaxCutoff = math.MaxUint64 / 10, used to calculate exact overflow
 const uint64MaxCutoff = 1844674407370955161
 
-// NumberType is how ReadNumber classifies a parsed number — whether it is an
-// integer, has a fractional part, is too large for NumberValue's fixed fields,
-// or is too large to materialize at all.
+// NumberType classifies a JSON number. ReadNumber produces Integer, Real, Big or
+// Overflow; NumberTypeInvalid is the zero value and is never returned by
+// ReadNumber — consumers (e.g. types.Number) use it to mark a numeric field whose
+// value was not a JSON number at all.
 type NumberType uint8
 
 const (
+	// NumberTypeInvalid means the value was not a JSON number. As the zero value
+	// it is the default for an unread/unset classification; ReadNumber never
+	// returns it.
+	NumberTypeInvalid = NumberType(iota)
 	// NumberTypeInteger is an integer value. It includes forms whose fractional
 	// part is zero, such as "1e3", "1.0" and "120e-1" (JSON Schema's rule).
-	NumberTypeInteger = NumberType(iota)
+	NumberTypeInteger
 	// NumberTypeReal is a number with a non-zero fractional part (e.g. "1.5").
 	NumberTypeReal
 	// NumberTypeBig is a valid number whose coefficient overflows uint64 or whose
