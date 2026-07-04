@@ -21,7 +21,8 @@ func (d *Duration) Validate(value types.String) Result[time.Duration] {
 		Defined: value.Defined,
 	}
 
-	if !result.IsValid() {
+	// Stop on a base error; also skip parsing an allowed null (no string to parse).
+	if !result.IsValid() || !value.Valid {
 		return result
 	}
 

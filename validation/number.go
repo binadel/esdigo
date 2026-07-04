@@ -2,21 +2,22 @@ package validation
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/validation/errors"
 )
 
 // orderedNumber is the set of scalar number types Number validates. Big numbers
-// (not comparable with <) have their own validators.
+// (not comparable with <) have their own validators (BigInt, BigFloat).
 type orderedNumber interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
 		~float32 | ~float64
 }
 
-// numberField is what Number.Validate reads from a decoded numeric wrapper
-// (types.Int64, types.Float64, ...): the tri-state plus the value and the
+// numberField is what the numeric validators read from a decoded wrapper
+// (types.Int64, types.BigInt, ...): the tri-state plus the value and the
 // classification of why it may be invalid.
 type numberField[V any] interface {
 	json.OptionalValue
@@ -51,8 +52,10 @@ type Number[V orderedNumber] struct {
 
 	hasMin, hasMax     bool
 	hasExMin, hasExMax bool
+	hasMultiple        bool
 	min, max           V
 	exMin, exMax       V
+	multiple           V
 }
 
 // NewNumber creates a numeric field validator for V at the given path, e.g.
@@ -97,51 +100,24 @@ func (n *Number[V]) ExclusiveMax(v V) *Number[V] {
 	return n
 }
 
+// MultipleOf requires the value to be an integer multiple of v.
+func (n *Number[V]) MultipleOf(v V) *Number[V] {
+	n.hasMultiple, n.multiple = true, v
+	return n
+}
+
 // Validate checks a decoded numeric field and returns a typed Result. On success
 // Result.Value holds the number; otherwise Result.Errors describes the failure.
 func (n *Number[V]) Validate(field numberField[V]) Result[V] {
-	result := Result[V]{
-		Path:    n.Path,
-		Present: field.IsPresent(),
-		Defined: field.IsDefined(),
-	}
-
-	if n.required && !field.IsPresent() {
-		result.Errors = append(result.Errors, errors.Required)
+	result, value, done := numberBase[V](n.Path, n.required, n.notNull, field)
+	if done {
 		return result
 	}
-	if n.notNull && !field.IsDefined() {
-		result.Errors = append(result.Errors, errors.NotNull)
-		return result
-	}
-	if !field.IsValid() {
-		// A defined value that isn't a usable number gets a precise reason; a null
-		// (not defined) that reached here is allowed and produces no error.
-		if field.IsDefined() {
-			_, typ := field.Unwrap()
-			result.Errors = append(result.Errors, reasonError(typ))
-		}
-		return result
-	}
-
-	value, _ := field.Unwrap()
 	n.checkBounds(value, &result)
 	if result.IsValid() {
 		result.Value = value
 	}
 	return result
-}
-
-// reasonError turns a number's classification into the matching precise error.
-func reasonError(typ json.NumberType) Error {
-	switch typ {
-	case json.NumberTypeReal:
-		return errors.NotInteger
-	case json.NumberTypeInvalid:
-		return errors.InvalidNumber
-	default: // Big, Overflow, or an integer that didn't fit the target width
-		return errors.OutOfRange
-	}
 }
 
 func (n *Number[V]) checkBounds(value V, result *Result[V]) {
@@ -157,12 +133,73 @@ func (n *Number[V]) checkBounds(value V, result *Result[V]) {
 	if n.hasExMax && value >= n.exMax {
 		result.Errors = append(result.Errors, numberBoundError(errors.ExclusiveMaximum, errors.ParamKeyExclusiveMaximum, n.exMax))
 	}
+	if n.hasMultiple && !isMultipleOf(value, n.multiple) {
+		result.Errors = append(result.Errors, numberBoundError(errors.MultipleOf, errors.ParamKeyMultipleOf, n.multiple))
+	}
 }
 
-func numberBoundError[V orderedNumber](base errors.BasicError, key string, bound V) Error {
+// isMultipleOf reports whether value is an integer multiple of factor. It compares
+// through float64, so it is exact for values within float64's integer range; for
+// exact checks on large integers use BigInt.
+func isMultipleOf[V orderedNumber](value, factor V) bool {
+	if factor == 0 {
+		return true
+	}
+	return math.Mod(float64(value), float64(factor)) == 0
+}
+
+// numberBase runs the checks common to every numeric validator — presence, null,
+// and the precise reason for an unusable value. done is true when the caller
+// should return result as-is; otherwise value holds the number to bounds-check.
+func numberBase[V any](path FieldPath, required, notNull bool, field numberField[V]) (result Result[V], value V, done bool) {
+	result.Path = path
+	result.Present = field.IsPresent()
+	result.Defined = field.IsDefined()
+
+	if required && !field.IsPresent() {
+		result.Errors = append(result.Errors, errors.Required)
+		return result, value, true
+	}
+	if notNull && !field.IsDefined() {
+		result.Errors = append(result.Errors, errors.NotNull)
+		return result, value, true
+	}
+	if !field.IsValid() {
+		// A defined value that isn't a usable number gets a precise reason; a null
+		// (not defined) that reached here is allowed and produces no error.
+		if field.IsDefined() {
+			_, typ := field.Unwrap()
+			result.Errors = append(result.Errors, reasonError(typ))
+		}
+		return result, value, true
+	}
+
+	value, _ = field.Unwrap()
+	return result, value, false
+}
+
+// reasonError turns a number's classification into the matching precise error.
+func reasonError(typ json.NumberType) Error {
+	switch typ {
+	case json.NumberTypeReal:
+		return errors.NotInteger
+	case json.NumberTypeInvalid:
+		return errors.InvalidNumber
+	default: // Big, Overflow, or an integer that didn't fit the target width
+		return errors.OutOfRange
+	}
+}
+
+// paramError builds a bound error carrying the offending bound as pre-formatted
+// JSON number bytes.
+func paramError(base errors.BasicError, key string, value []byte) Error {
 	return &errors.NumberParamError{
 		BasicError: base,
 		ParamKey:   key,
-		ParamValue: []byte(fmt.Sprintf("%v", bound)),
+		ParamValue: value,
 	}
+}
+
+func numberBoundError[V orderedNumber](base errors.BasicError, key string, bound V) Error {
+	return paramError(base, key, []byte(fmt.Sprintf("%v", bound)))
 }

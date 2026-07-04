@@ -13,13 +13,16 @@ import (
 var regexCache = &utils.RegexCache{}
 
 type String struct {
-	Path     FieldPath
-	required bool
-	notNull  bool
-	len      int
-	minLen   int
-	maxLen   int
-	pattern  *regexp.Regexp
+	Path      FieldPath
+	required  bool
+	notNull   bool
+	hasLen    bool
+	hasMinLen bool
+	hasMaxLen bool
+	len       int
+	minLen    int
+	maxLen    int
+	pattern   *regexp.Regexp
 }
 
 func NewString(path ...string) *String {
@@ -39,17 +42,17 @@ func (s *String) NotNull() *String {
 }
 
 func (s *String) Length(length int) *String {
-	s.len = length
+	s.hasLen, s.len = true, length
 	return s
 }
 
 func (s *String) MinLength(minLength int) *String {
-	s.minLen = minLength
+	s.hasMinLen, s.minLen = true, minLength
 	return s
 }
 
 func (s *String) MaxLength(maxLength int) *String {
-	s.maxLen = maxLength
+	s.hasMaxLen, s.maxLen = true, maxLength
 	return s
 }
 
@@ -117,18 +120,22 @@ func (s *String) validateRaw(value types.String) []Error {
 	}
 
 	if !value.Valid {
-		errorList = append(errorList, errors.InvalidString)
+		// A defined value that isn't a usable string is the wrong type; a null (not
+		// defined) that reached here is allowed and produces no error.
+		if value.Defined {
+			errorList = append(errorList, errors.InvalidString)
+		}
 		return errorList
 	}
 
 	str := utils.UnsafeString(value.Value)
 
 	var length int
-	if s.len > 0 || s.minLen > 0 || s.maxLen > 0 {
+	if s.hasLen || s.hasMinLen || s.hasMaxLen {
 		length = utf8.RuneCountInString(str)
 	}
 
-	if s.len > 0 {
+	if s.hasLen {
 		if length != s.len {
 			errorList = append(errorList, &errors.IntParamError{
 				BasicError: errors.Length,
@@ -138,7 +145,7 @@ func (s *String) validateRaw(value types.String) []Error {
 		}
 	}
 
-	if s.minLen > 0 {
+	if s.hasMinLen {
 		if length < s.minLen {
 			errorList = append(errorList, &errors.IntParamError{
 				BasicError: errors.MinLength,
@@ -148,7 +155,7 @@ func (s *String) validateRaw(value types.String) []Error {
 		}
 	}
 
-	if s.maxLen > 0 {
+	if s.hasMaxLen {
 		if length > s.maxLen {
 			errorList = append(errorList, &errors.IntParamError{
 				BasicError: errors.MaxLength,

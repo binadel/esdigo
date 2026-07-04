@@ -44,7 +44,11 @@ func (b *Boolean) Validate(value types.Boolean) Result[bool] {
 		return result
 	}
 	if !value.Valid {
-		result.Errors = append(result.Errors, errors.InvalidBoolean)
+		// A defined value that isn't a boolean is the wrong type; a null (not
+		// defined) that reached here is allowed and produces no error.
+		if value.Defined {
+			result.Errors = append(result.Errors, errors.InvalidBoolean)
+		}
 		return result
 	}
 
