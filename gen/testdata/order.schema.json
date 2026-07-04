@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "title": "is a customer order.",
+  "required": ["id", "customer"],
+  "$defs": {
+    "Address": {
+      "type": "object",
+      "title": "is a postal address.",
+      "required": ["city"],
+      "properties": {
+        "street": { "type": "string", "maxLength": 200 },
+        "city": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "customer": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "email": { "type": "string", "format": "email" }
+      }
+    },
+    "shippingAddress": { "$ref": "#/$defs/Address" },
+    "billingAddress": { "type": ["object", "null"], "$ref": "#/$defs/Address" }
+  }
+}

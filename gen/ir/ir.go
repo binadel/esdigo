@@ -87,37 +87,145 @@ func (m *Message) HasValidation() bool {
 	return false
 }
 
-// Build resolves a root object schema into a generated file with one message.
+// builder accumulates the messages (root, inline nested objects and $defs) of one
+// generated file, resolving $ref against the merged definitions.
+type builder struct {
+	defs     map[string]*schema.Schema
+	messages []*Message
+	built    map[string]bool // message names already produced (dedup)
+	imports  map[string]bool // extra result-type imports
+}
+
+// Build resolves a root object schema (plus its $defs and inline nested objects)
+// into a generated file. Each object becomes its own message.
 func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	if root.Type.Primary() != "object" {
 		return nil, fmt.Errorf("root schema must be an object, got %q", root.Type.Primary())
 	}
 
-	msg := &Message{Name: goName(name), Doc: doc(root)}
-	extra := map[string]bool{}
-	for _, jsonName := range sortedKeys(root.Properties) {
-		field, err := buildField(jsonName, root.Properties[jsonName], root.IsRequired(jsonName))
-		if err != nil {
-			return nil, err
+	b := &builder{
+		defs:    root.AllDefs(),
+		built:   map[string]bool{},
+		imports: map[string]bool{},
+	}
+
+	if err := b.buildMessage(goName(name), root); err != nil {
+		return nil, err
+	}
+	// Emit every object definition too, referenced or not.
+	for _, key := range sortedKeys(b.defs) {
+		if b.defs[key].Type.Primary() == "object" {
+			if err := b.buildMessage(goName(key), b.defs[key]); err != nil {
+				return nil, err
+			}
 		}
-		for _, imp := range field.Imports {
-			extra[imp] = true
+	}
+
+	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
+
+	needValidation := false
+	for _, m := range b.messages {
+		if m.HasValidation() {
+			needValidation = true
 		}
-		msg.Fields = append(msg.Fields, field)
 	}
 
 	return &File{
 		Package:  pkg,
-		Imports:  buildImports(msg.HasValidation(), extra),
-		Messages: []*Message{msg},
+		Imports:  buildImports(needValidation, b.imports),
+		Messages: b.messages,
 	}, nil
 }
 
-func buildField(jsonName string, s *schema.Schema, required bool) (*Field, error) {
+// buildMessage produces the message named goName for object schema s (once).
+func (b *builder) buildMessage(name string, s *schema.Schema) error {
+	if b.built[name] {
+		return nil
+	}
+	b.built[name] = true
+
+	msg := &Message{Name: name, Doc: doc(s)}
+	for _, jsonName := range sortedKeys(s.Properties) {
+		field, err := b.buildField(name, jsonName, s.Properties[jsonName], s.IsRequired(jsonName))
+		if err != nil {
+			return err
+		}
+		for _, imp := range field.Imports {
+			b.imports[imp] = true
+		}
+		msg.Fields = append(msg.Fields, field)
+	}
+	b.messages = append(b.messages, msg)
+	return nil
+}
+
+// buildField resolves one property. Objects and $refs become types.Object fields
+// (registering / referencing the child message); everything else is a scalar.
+func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
+	if s.Ref != "" {
+		return b.buildRefField(msgName, jsonName, s, required)
+	}
+
+	switch kind := s.Type.Primary(); kind {
+	case "object":
+		child := msgName + goName(jsonName)
+		if err := b.buildMessage(child, s); err != nil {
+			return nil, err
+		}
+		return objectField(jsonName, child, required, !s.Type.Nullable()), nil
+	case "string", "integer", "number", "boolean":
+		return buildScalarField(jsonName, s, required), nil
+	default:
+		return nil, fmt.Errorf("unsupported type %q for property %q", kind, jsonName)
+	}
+}
+
+// buildRefField resolves a $ref: an object target becomes a shared reference to
+// that definition's message; a scalar target is inlined as the field's schema.
+func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
+	key := refName(s.Ref)
+	target, ok := b.defs[key]
+	if !ok {
+		return nil, fmt.Errorf("unresolved $ref %q for property %q", s.Ref, jsonName)
+	}
+	if target.Type.Primary() == "object" {
+		child := goName(key)
+		if err := b.buildMessage(child, target); err != nil {
+			return nil, err
+		}
+		// A bare $ref has no type (notNull); a sibling "type" may relax it to
+		// nullable, e.g. {"type":["object","null"],"$ref":...}.
+		return objectField(jsonName, child, required, !s.Type.Nullable()), nil
+	}
+	return b.buildField(msgName, jsonName, target, required)
+}
+
+// objectField builds a types.Object[Child,*Child] field and its object-level
+// validator (presence/null/type). Recursive validation of the child's own fields
+// is not yet composed here.
+func objectField(jsonName, child string, required, notNull bool) *Field {
+	f := &Field{
+		GoName:    goName(jsonName),
+		JSONName:  jsonName,
+		ModelType: fmt.Sprintf("types.Object[%s, *%s]", child, child),
+	}
+	f.Validate = required || notNull
+	if f.Validate {
+		f.ValidatorType = fmt.Sprintf("*validation.Object[%s, *%s]", child, child)
+		f.ResultType = "*" + child
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "validation.NewObject[%s, *%s](%q)", child, child, jsonName)
+		writePresence(&sb, required, notNull)
+		f.NewExpr = sb.String()
+	}
+	return f
+}
+
+func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
 	notNull := !s.Type.Nullable()
 	f := &Field{GoName: goName(jsonName), JSONName: jsonName, Doc: doc(s)}
 
-	switch kind := s.Type.Primary(); kind {
+	switch s.Type.Primary() {
 	case "string":
 		f.ModelType = "types.String"
 		f.ValidatorType = "*validation.String"
@@ -148,12 +256,19 @@ func buildField(jsonName string, s *schema.Schema, required bool) (*Field, error
 		f.ValidatorType = "*validation.Boolean"
 		f.ResultType = "bool"
 		f.NewExpr = booleanExpr(jsonName, required, notNull, s)
-	default:
-		return nil, fmt.Errorf("unsupported type %q for property %q", kind, jsonName)
 	}
 
 	f.Validate = required || notNull || hasValueConstraint(s)
-	return f, nil
+	return f
+}
+
+// refName returns the last path segment of a JSON pointer $ref, e.g. "Address"
+// for "#/$defs/Address".
+func refName(ref string) string {
+	if i := strings.LastIndexByte(ref, '/'); i >= 0 {
+		return ref[i+1:]
+	}
+	return ref
 }
 
 func hasValueConstraint(s *schema.Schema) bool {

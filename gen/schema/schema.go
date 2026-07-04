@@ -14,9 +14,16 @@ type Schema struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 
+	// reference
+	Ref string `json:"$ref"`
+
 	// object
 	Properties map[string]*Schema `json:"properties"`
 	Required   []string           `json:"required"`
+
+	// named subschemas: "$defs" (2020-12 / OpenAPI 3.1) or "definitions" (draft-07)
+	Defs        map[string]*Schema `json:"$defs"`
+	Definitions map[string]*Schema `json:"definitions"`
 
 	// string
 	MinLength *int   `json:"minLength"`
@@ -49,6 +56,22 @@ func Parse(data []byte) (*Schema, error) {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// AllDefs merges the named subschemas from "$defs" and "definitions", with "$defs"
+// taking precedence on a key collision.
+func (s *Schema) AllDefs() map[string]*Schema {
+	if len(s.Defs) == 0 && len(s.Definitions) == 0 {
+		return nil
+	}
+	all := make(map[string]*Schema, len(s.Defs)+len(s.Definitions))
+	for k, v := range s.Definitions {
+		all[k] = v
+	}
+	for k, v := range s.Defs {
+		all[k] = v
+	}
+	return all
 }
 
 // IsRequired reports whether name is in this (object) schema's required list.

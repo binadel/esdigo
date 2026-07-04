@@ -6,28 +6,33 @@ import (
 	"testing"
 )
 
-// TestGenerateGolden regenerates gen/example/person.go from its schema and
-// asserts it still matches the committed, compiled golden file — so any drift in
-// the generator (or a change that would break the example) fails here.
+// TestGenerateGolden regenerates each committed, compiled golden file from its
+// schema and asserts it still matches — so any generator drift (or a change that
+// would break the example) fails here.
 func TestGenerateGolden(t *testing.T) {
-	schema, err := os.ReadFile("testdata/person.schema.json")
-	if err != nil {
-		t.Fatalf("read schema: %v", err)
+	cases := []struct{ schema, golden, name string }{
+		{"testdata/person.schema.json", "example/person.go", "Person"},
+		{"testdata/order.schema.json", "example/order.go", "Order"},
 	}
-
-	got, err := Generate(schema, "example", "Person")
-	if err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-
-	want, err := os.ReadFile("example/person.go")
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-
-	if string(got) != string(want) {
-		t.Errorf("generated output drifted from gen/example/person.go.\n"+
-			"Regenerate the golden file if the change is intended.\n--- got ---\n%s", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			schema, err := os.ReadFile(c.schema)
+			if err != nil {
+				t.Fatalf("read schema: %v", err)
+			}
+			got, err := Generate(schema, "example", c.name)
+			if err != nil {
+				t.Fatalf("generate: %v", err)
+			}
+			want, err := os.ReadFile(c.golden)
+			if err != nil {
+				t.Fatalf("read golden: %v", err)
+			}
+			if string(got) != string(want) {
+				t.Errorf("generated output drifted from %s.\n"+
+					"Regenerate the golden file if the change is intended.\n--- got ---\n%s", c.golden, got)
+			}
+		})
 	}
 }
 
@@ -70,6 +75,31 @@ func TestGenerateFormats(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("generated output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateUnresolvedRef(t *testing.T) {
+	s := `{"type":"object","properties":{"x":{"$ref":"#/$defs/Missing"}}}`
+	if _, err := Generate([]byte(s), "example", "X"); err == nil {
+		t.Errorf("expected error for unresolved $ref")
+	}
+}
+
+// TestGenerateDraft07Definitions confirms draft-07 "definitions" + "#/definitions/"
+// refs resolve the same as 2020-12 "$defs".
+func TestGenerateDraft07Definitions(t *testing.T) {
+	s := `{"type":"object",
+		"definitions":{"Inner":{"type":"object","properties":{"a":{"type":"string"}}}},
+		"properties":{"inner":{"$ref":"#/definitions/Inner"}}}`
+	out, err := Generate([]byte(s), "example", "Root")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type Inner struct", "types.Object[Inner, *Inner]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
 		}
 	}
 }
