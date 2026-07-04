@@ -37,10 +37,44 @@ type Field struct {
 
 	// Validation. Validate is false for a field with no constraints at all.
 	Validate      bool
-	ByPointer     bool   // number-family validators take &field, others take it by value
-	ValidatorType string // e.g. "*validation.String"
-	ResultType    string // the Result[T] payload type, e.g. "string"
-	NewExpr       string // the fluent constructor, e.g. validation.NewString("x").Required()
+	ByPointer     bool     // number-family validators take &field, others take it by value
+	ValidatorType string   // e.g. "*validation.String"
+	ResultType    string   // the Result[T] payload type, e.g. "string"
+	NewExpr       string   // the fluent constructor, e.g. validation.NewString("x").Required()
+	Imports       []string // extra imports this field's result type needs
+}
+
+// formatInfo maps a JSON Schema string "format" to the format-specific validator:
+// the trailing builder call, the resulting validator and Result types, and the
+// extra imports the Result type pulls in. The model type stays types.String.
+type formatInfo struct {
+	method        string
+	validatorType string
+	resultType    string
+	imports       []string
+}
+
+var formats = map[string]formatInfo{
+	"email":         {".Email()", "*validation.Email", "*mail.Address", []string{"net/mail"}},
+	"ipv4":          {".IP().Version4()", "*validation.IP", "net.IP", []string{"net"}},
+	"ipv6":          {".IP().Version6()", "*validation.IP", "net.IP", []string{"net"}},
+	"uri":           {".Uri()", "*validation.Uri", "*url.URL", []string{"net/url"}},
+	"uri-reference": {".UriReference()", "*validation.Uri", "*url.URL", []string{"net/url"}},
+	"uuid":          {".Uuid()", "*validation.Uuid", "uuid.UUID", []string{"github.com/google/uuid"}},
+	"date":          {".Date()", "*validation.Time", "time.Time", []string{"time"}},
+	"time":          {".Time()", "*validation.Time", "time.Time", []string{"time"}},
+	"date-time":     {".DateTime()", "*validation.Time", "time.Time", []string{"time"}},
+	"duration":      {".Duration()", "*validation.Duration", "time.Duration", []string{"time"}},
+	"regex":         {".Regex()", "*validation.Regex", "*regexp.Regexp", []string{"regexp"}},
+	"hostname":      {".Hostname()", "*validation.Hostname", "string", nil},
+	"json-pointer":  {".JsonPointer()", "*validation.JsonPointer", "string", nil},
+}
+
+// formatKnown reports whether name is a format the generator maps to a validator.
+// Unknown formats are ignored (JSON Schema treats format as an annotation).
+func formatKnown(name string) bool {
+	_, ok := formats[name]
+	return ok
 }
 
 // HasValidation reports whether any field of the message is validated.
@@ -60,17 +94,21 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	}
 
 	msg := &Message{Name: goName(name), Doc: doc(root)}
+	extra := map[string]bool{}
 	for _, jsonName := range sortedKeys(root.Properties) {
 		field, err := buildField(jsonName, root.Properties[jsonName], root.IsRequired(jsonName))
 		if err != nil {
 			return nil, err
+		}
+		for _, imp := range field.Imports {
+			extra[imp] = true
 		}
 		msg.Fields = append(msg.Fields, field)
 	}
 
 	return &File{
 		Package:  pkg,
-		Imports:  imports(msg.HasValidation()),
+		Imports:  buildImports(msg.HasValidation(), extra),
 		Messages: []*Message{msg},
 	}, nil
 }
@@ -85,6 +123,14 @@ func buildField(jsonName string, s *schema.Schema, required bool) (*Field, error
 		f.ValidatorType = "*validation.String"
 		f.ResultType = "string"
 		f.NewExpr = stringExpr(jsonName, required, notNull, s)
+		// A recognized format switches to its specific validator; the base String
+		// constraints already applied above still run before the format check.
+		if fi, ok := formats[s.Format]; ok {
+			f.ValidatorType = fi.validatorType
+			f.ResultType = fi.resultType
+			f.NewExpr += fi.method
+			f.Imports = fi.imports
+		}
 	case "integer":
 		f.ModelType = "types.Int64"
 		f.ByPointer = true
@@ -111,7 +157,7 @@ func buildField(jsonName string, s *schema.Schema, required bool) (*Field, error
 }
 
 func hasValueConstraint(s *schema.Schema) bool {
-	return s.MinLength != nil || s.MaxLength != nil || s.Pattern != "" || s.Format != "" ||
+	return s.MinLength != nil || s.MaxLength != nil || s.Pattern != "" || formatKnown(s.Format) ||
 		len(s.Enum) > 0 || s.Const != nil ||
 		s.Minimum != nil || s.Maximum != nil || s.ExclusiveMinimum != nil ||
 		s.ExclusiveMaximum != nil || s.MultipleOf != nil
@@ -207,15 +253,23 @@ func doc(s *schema.Schema) string {
 	return s.Description
 }
 
-func imports(needValidation bool) []string {
-	imps := []string{
-		"github.com/binadel/esdigo/json",
-		"github.com/binadel/esdigo/json/types",
+func buildImports(needValidation bool, extra map[string]bool) []string {
+	set := map[string]bool{
+		"github.com/binadel/esdigo/json":       true,
+		"github.com/binadel/esdigo/json/types": true,
 	}
 	if needValidation {
-		imps = append(imps, "github.com/binadel/esdigo/validation")
+		set["github.com/binadel/esdigo/validation"] = true
 	}
-	return imps
+	for imp := range extra {
+		set[imp] = true
+	}
+	list := make([]string, 0, len(set))
+	for imp := range set {
+		list = append(list, imp)
+	}
+	sort.Strings(list)
+	return list
 }
 
 func sortedKeys(m map[string]*schema.Schema) []string {

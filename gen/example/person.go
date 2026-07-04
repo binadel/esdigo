@@ -3,16 +3,23 @@
 package example
 
 import (
+	"net/mail"
+	"net/url"
+
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/json/types"
 	"github.com/binadel/esdigo/validation"
+	"github.com/google/uuid"
 )
 
 // Person is a registered person.
 type Person struct {
 	Active    types.Boolean `json:"active"`
 	Age       types.Int64   `json:"age"`
+	Email     types.String  `json:"email"`
 	FirstName types.String  `json:"firstName"`
+	Homepage  types.String  `json:"homepage"`
+	Id        types.String  `json:"id"`
 	LastName  types.String  `json:"lastName"`
 	Role      types.String  `json:"role"`
 	Score     types.Float64 `json:"score"`
@@ -57,12 +64,42 @@ func (p *Person) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
+	if p.Email.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"email\":")
+		if !p.Email.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
 	if p.FirstName.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
 		w.WriteRawString("\"firstName\":")
 		if !p.FirstName.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Homepage.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"homepage\":")
+		if !p.Homepage.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Id.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"id\":")
+		if !p.Id.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -118,8 +155,14 @@ func (p *Person) ReadJSON(r *json.Reader) bool {
 						ok = p.Active.ReadJSON(r)
 					case "age":
 						ok = p.Age.ReadJSON(r)
+					case "email":
+						ok = p.Email.ReadJSON(r)
 					case "firstName":
 						ok = p.FirstName.ReadJSON(r)
+					case "homepage":
+						ok = p.Homepage.ReadJSON(r)
+					case "id":
+						ok = p.Id.ReadJSON(r)
 					case "lastName":
 						ok = p.LastName.ReadJSON(r)
 					case "role":
@@ -157,7 +200,10 @@ func (p *Person) ReadJSON(r *json.Reader) bool {
 type ValidatedPerson struct {
 	Active    validation.Result[bool]
 	Age       validation.Result[int64]
+	Email     validation.Result[*mail.Address]
 	FirstName validation.Result[string]
+	Homepage  validation.Result[*url.URL]
+	Id        validation.Result[uuid.UUID]
 	LastName  validation.Result[string]
 	Role      validation.Result[string]
 	Score     validation.Result[float64]
@@ -166,7 +212,10 @@ type ValidatedPerson struct {
 type PersonValidator struct {
 	Active    *validation.Boolean
 	Age       *validation.Number[int64]
+	Email     *validation.Email
 	FirstName *validation.String
+	Homepage  *validation.Uri
+	Id        *validation.Uuid
 	LastName  *validation.String
 	Role      *validation.String
 	Score     *validation.Number[float64]
@@ -176,7 +225,10 @@ func NewPersonValidator() *PersonValidator {
 	return &PersonValidator{
 		Active:    validation.NewBoolean("active").NotNull(),
 		Age:       validation.NewNumber[int64]("age").Required().NotNull().Min(0).Max(150),
+		Email:     validation.NewString("email").NotNull().MaxLength(254).Email(),
 		FirstName: validation.NewString("firstName").Required().NotNull().MinLength(1).MaxLength(100),
+		Homepage:  validation.NewString("homepage").Uri(),
+		Id:        validation.NewString("id").NotNull().Uuid(),
 		LastName:  validation.NewString("lastName").MaxLength(100),
 		Role:      validation.NewString("role").NotNull().Enum("admin", "user", "guest"),
 		Score:     validation.NewNumber[float64]("score").NotNull().Min(0).MultipleOf(0.5),
@@ -187,7 +239,10 @@ func (v *PersonValidator) Validate(p *Person) *ValidatedPerson {
 	return &ValidatedPerson{
 		Active:    v.Active.Validate(p.Active),
 		Age:       v.Age.Validate(&p.Age),
+		Email:     v.Email.Validate(p.Email),
 		FirstName: v.FirstName.Validate(p.FirstName),
+		Homepage:  v.Homepage.Validate(p.Homepage),
+		Id:        v.Id.Validate(p.Id),
 		LastName:  v.LastName.Validate(p.LastName),
 		Role:      v.Role.Validate(p.Role),
 		Score:     v.Score.Validate(&p.Score),

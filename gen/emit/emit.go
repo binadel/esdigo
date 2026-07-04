@@ -20,11 +20,7 @@ func File(f *ir.File) ([]byte, error) {
 	fmt.Fprintf(&b, "package %s\n\n", f.Package)
 
 	if len(f.Imports) > 0 {
-		b.WriteString("import (\n")
-		for _, imp := range f.Imports {
-			fmt.Fprintf(&b, "\t%q\n", imp)
-		}
-		b.WriteString(")\n\n")
+		emitImports(&b, f.Imports)
 	}
 
 	for _, m := range f.Messages {
@@ -36,6 +32,42 @@ func File(f *ir.File) ([]byte, error) {
 		return nil, fmt.Errorf("format generated source: %w\n%s", err, b.Bytes())
 	}
 	return src, nil
+}
+
+// emitImports renders the import block, keeping standard-library imports in a
+// first group and external ones in a second (go/format sorts within a group but
+// does not separate them). Input is assumed already sorted.
+func emitImports(b *bytes.Buffer, imports []string) {
+	var std, ext []string
+	for _, imp := range imports {
+		if isStdlib(imp) {
+			std = append(std, imp)
+		} else {
+			ext = append(ext, imp)
+		}
+	}
+
+	b.WriteString("import (\n")
+	for _, imp := range std {
+		fmt.Fprintf(b, "\t%q\n", imp)
+	}
+	if len(std) > 0 && len(ext) > 0 {
+		b.WriteString("\n")
+	}
+	for _, imp := range ext {
+		fmt.Fprintf(b, "\t%q\n", imp)
+	}
+	b.WriteString(")\n\n")
+}
+
+// isStdlib reports whether an import path is from the standard library — its
+// first path segment carries no dot (no domain).
+func isStdlib(path string) bool {
+	first := path
+	if i := strings.IndexByte(path, '/'); i >= 0 {
+		first = path[:i]
+	}
+	return !strings.Contains(first, ".")
 }
 
 func emitMessage(b *bytes.Buffer, m *ir.Message) {

@@ -39,10 +39,13 @@ func TestPersonRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPersonValidatorOK validates a well-formed document.
+// TestPersonValidatorOK validates a well-formed document, including the format
+// fields whose validators return typed values.
 func TestPersonValidatorOK(t *testing.T) {
 	var p Person
-	if err := p.UnmarshalJSON([]byte(`{"firstName":"Ada","age":36,"score":9.5,"role":"user","active":false}`)); err != nil {
+	in := `{"firstName":"Ada","age":36,"score":9.5,"role":"user","active":false,` +
+		`"id":"123e4567-e89b-12d3-a456-426614174000","email":"ada@example.com","homepage":"https://example.com"}`
+	if err := p.UnmarshalJSON([]byte(in)); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	r := NewPersonValidator().Validate(&p)
@@ -54,6 +57,31 @@ func TestPersonValidatorOK(t *testing.T) {
 	}
 	if !r.Role.IsValid() || !r.Score.IsValid() || !r.Active.IsValid() {
 		t.Errorf("role/score/active should be valid")
+	}
+	// format validators map to typed values
+	if !r.Email.IsValid() || r.Email.Value == nil || r.Email.Value.Address != "ada@example.com" {
+		t.Errorf("email should parse to *mail.Address: %+v", r.Email.Errors)
+	}
+	if !r.Id.IsValid() || r.Id.Value.String() != "123e4567-e89b-12d3-a456-426614174000" {
+		t.Errorf("id should parse to uuid.UUID: %+v", r.Id.Errors)
+	}
+	if !r.Homepage.IsValid() || r.Homepage.Value == nil || r.Homepage.Value.Host != "example.com" {
+		t.Errorf("homepage should parse to *url.URL: %+v", r.Homepage.Errors)
+	}
+}
+
+// TestPersonFormatErrors checks that a malformed format field is reported.
+func TestPersonFormatErrors(t *testing.T) {
+	var p Person
+	if err := p.UnmarshalJSON([]byte(`{"firstName":"Ada","age":36,"email":"not-an-email","id":"nope"}`)); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	r := NewPersonValidator().Validate(&p)
+	if r.Email.IsValid() {
+		t.Errorf("bad email should be invalid")
+	}
+	if r.Id.IsValid() {
+		t.Errorf("bad uuid should be invalid")
 	}
 }
 

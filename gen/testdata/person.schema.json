@@ -28,6 +28,19 @@
     },
     "active": {
       "type": "boolean"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "homepage": {
+      "type": ["string", "null"],
+      "format": "uri"
     }
   }
 }

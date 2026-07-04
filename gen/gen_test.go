@@ -2,6 +2,7 @@ package gen
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,54 @@ func TestGenerateGolden(t *testing.T) {
 func TestGenerateRejectsNonObjectRoot(t *testing.T) {
 	if _, err := Generate([]byte(`{"type":"string"}`), "example", "X"); err == nil {
 		t.Errorf("expected error for non-object root")
+	}
+}
+
+// TestGenerateFormats exercises the full string-format table: each format maps to
+// the right validator type, builder call, Result payload and import.
+func TestGenerateFormats(t *testing.T) {
+	schema := `{
+		"type": "object",
+		"properties": {
+			"ip":   {"type": "string", "format": "ipv4"},
+			"when": {"type": "string", "format": "date-time"},
+			"day":  {"type": "string", "format": "date"},
+			"dur":  {"type": "string", "format": "duration"},
+			"re":   {"type": "string", "format": "regex"},
+			"host": {"type": "string", "format": "hostname"},
+			"ptr":  {"type": "string", "format": "json-pointer"},
+			"ref":  {"type": "string", "format": "uri-reference"}
+		}
+	}`
+	out, err := Generate([]byte(schema), "example", "Formats")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+
+	for _, want := range []string{
+		"*validation.IP", ".IP().Version4()", "validation.Result[net.IP]", `"net"`,
+		"*validation.Time", ".DateTime()", ".Date()", "validation.Result[time.Time]", `"time"`,
+		"*validation.Duration", ".Duration()", "validation.Result[time.Duration]",
+		"*validation.Regex", ".Regex()", "validation.Result[*regexp.Regexp]", `"regexp"`,
+		"*validation.Hostname", ".Hostname()",
+		"*validation.JsonPointer", ".JsonPointer()",
+		".UriReference()", `"net/url"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("generated output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateUnknownFormatIgnored confirms an unrecognized format falls back to a
+// plain string validator (JSON Schema treats format as an annotation).
+func TestGenerateUnknownFormatIgnored(t *testing.T) {
+	out, err := Generate([]byte(`{"type":"object","properties":{"x":{"type":"string","format":"weird"}}}`), "example", "X")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if strings.Contains(string(out), "*validation.String") == false {
+		t.Errorf("unknown format should map to plain *validation.String:\n%s", out)
 	}
 }
