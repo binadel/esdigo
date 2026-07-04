@@ -15,6 +15,8 @@ const (
 	ParamKeyExactItems       = `,"exactItems":`
 	ParamKeyMinItems         = `,"minItems":`
 	ParamKeyMaxItems         = `,"maxItems":`
+	ParamKeyEnum             = `,"enum":`
+	ParamKeyConst            = `,"const":`
 	ParamKeyVersion          = `,"version":`
 )
 
@@ -55,6 +57,27 @@ func (e *NumberParamError) WriteJSON(w *json.Writer) bool {
 	w.WriteString(e.Message)
 	w.WriteRawString(e.ParamKey)
 	w.WriteRawNumber(e.ParamValue)
+	w.EndObject()
+	return true
+}
+
+// RawParamError is a BasicError carrying one pre-serialized JSON parameter — an
+// enum array or a const value — written verbatim under ParamKey. It lets a
+// validator echo the allowed value(s) of any type without knowing them here.
+type RawParamError struct {
+	BasicError
+	ParamKey   string
+	ParamValue []byte
+}
+
+func (e *RawParamError) WriteJSON(w *json.Writer) bool {
+	w.BeginObject()
+	w.WriteRawString(keyCode)
+	w.WriteString(string(e.Code))
+	w.WriteRawString(keyMessage)
+	w.WriteString(e.Message)
+	w.WriteRawString(e.ParamKey)
+	w.WriteRawBytes(e.ParamValue)
 	w.EndObject()
 	return true
 }

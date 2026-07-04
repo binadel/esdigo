@@ -17,6 +17,10 @@ type BigInt struct {
 	min, max     *big.Int
 	exMin, exMax *big.Int
 	multiple     *big.Int
+	constValue   *big.Int
+	enum         []*big.Int
+	constJSON    []byte
+	enumJSON     []byte
 }
 
 // NewBigInt creates a big-integer field validator at the given path.
@@ -31,6 +35,20 @@ func (b *BigInt) Max(v *big.Int) *BigInt          { b.max = v; return b }
 func (b *BigInt) ExclusiveMin(v *big.Int) *BigInt { b.exMin = v; return b }
 func (b *BigInt) ExclusiveMax(v *big.Int) *BigInt { b.exMax = v; return b }
 func (b *BigInt) MultipleOf(v *big.Int) *BigInt   { b.multiple = v; return b }
+
+// Const requires the value to equal v (JSON-Schema const).
+func (b *BigInt) Const(v *big.Int) *BigInt {
+	b.constValue = v
+	b.constJSON = []byte(v.Text(10))
+	return b
+}
+
+// Enum requires the value to be one of values (JSON-Schema enum).
+func (b *BigInt) Enum(values ...*big.Int) *BigInt {
+	b.enum = values
+	b.enumJSON = bigIntsJSON(values)
+	return b
+}
 
 // Validate checks a decoded big-integer field and returns a typed Result.
 func (b *BigInt) Validate(field numberField[*big.Int]) Result[*big.Int] {
@@ -54,11 +72,37 @@ func (b *BigInt) Validate(field numberField[*big.Int]) Result[*big.Int] {
 	if b.multiple != nil && b.multiple.Sign() != 0 && new(big.Int).Rem(value, b.multiple).Sign() != 0 {
 		result.Errors = append(result.Errors, paramError(errors.MultipleOf, errors.ParamKeyMultipleOf, []byte(b.multiple.Text(10))))
 	}
+	if b.constValue != nil && value.Cmp(b.constValue) != 0 {
+		result.Errors = append(result.Errors, rawParamError(errors.Const, errors.ParamKeyConst, b.constJSON))
+	}
+	if len(b.enum) > 0 && !containsBigInt(b.enum, value) {
+		result.Errors = append(result.Errors, rawParamError(errors.Enum, errors.ParamKeyEnum, b.enumJSON))
+	}
 
 	if result.IsValid() {
 		result.Value = value
 	}
 	return result
+}
+
+func bigIntsJSON(values []*big.Int) []byte {
+	b := []byte{'['}
+	for i, v := range values {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, v.Text(10)...)
+	}
+	return append(b, ']')
+}
+
+func containsBigInt(list []*big.Int, v *big.Int) bool {
+	for _, x := range list {
+		if v.Cmp(x) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // BigFloat validates a decoded arbitrary-precision float field (types.BigFloat),
@@ -72,6 +116,10 @@ type BigFloat struct {
 	min, max     *big.Float
 	exMin, exMax *big.Float
 	multiple     *big.Float
+	constValue   *big.Float
+	enum         []*big.Float
+	constJSON    []byte
+	enumJSON     []byte
 }
 
 // NewBigFloat creates a big-float field validator at the given path.
@@ -86,6 +134,20 @@ func (b *BigFloat) Max(v *big.Float) *BigFloat          { b.max = v; return b }
 func (b *BigFloat) ExclusiveMin(v *big.Float) *BigFloat { b.exMin = v; return b }
 func (b *BigFloat) ExclusiveMax(v *big.Float) *BigFloat { b.exMax = v; return b }
 func (b *BigFloat) MultipleOf(v *big.Float) *BigFloat   { b.multiple = v; return b }
+
+// Const requires the value to equal v (JSON-Schema const).
+func (b *BigFloat) Const(v *big.Float) *BigFloat {
+	b.constValue = v
+	b.constJSON = bigFloatBytes(v)
+	return b
+}
+
+// Enum requires the value to be one of values (JSON-Schema enum).
+func (b *BigFloat) Enum(values ...*big.Float) *BigFloat {
+	b.enum = values
+	b.enumJSON = bigFloatsJSON(values)
+	return b
+}
 
 // Validate checks a decoded big-float field and returns a typed Result.
 func (b *BigFloat) Validate(field numberField[*big.Float]) Result[*big.Float] {
@@ -109,6 +171,12 @@ func (b *BigFloat) Validate(field numberField[*big.Float]) Result[*big.Float] {
 	if b.multiple != nil && b.multiple.Sign() != 0 && !bigFloatIsMultiple(value, b.multiple) {
 		result.Errors = append(result.Errors, paramError(errors.MultipleOf, errors.ParamKeyMultipleOf, bigFloatBytes(b.multiple)))
 	}
+	if b.constValue != nil && value.Cmp(b.constValue) != 0 {
+		result.Errors = append(result.Errors, rawParamError(errors.Const, errors.ParamKeyConst, b.constJSON))
+	}
+	if len(b.enum) > 0 && !containsBigFloat(b.enum, value) {
+		result.Errors = append(result.Errors, rawParamError(errors.Enum, errors.ParamKeyEnum, b.enumJSON))
+	}
 
 	if result.IsValid() {
 		result.Value = value
@@ -118,6 +186,26 @@ func (b *BigFloat) Validate(field numberField[*big.Float]) Result[*big.Float] {
 
 func bigFloatBytes(v *big.Float) []byte {
 	return []byte(v.Text('g', -1))
+}
+
+func bigFloatsJSON(values []*big.Float) []byte {
+	b := []byte{'['}
+	for i, v := range values {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, bigFloatBytes(v)...)
+	}
+	return append(b, ']')
+}
+
+func containsBigFloat(list []*big.Float, v *big.Float) bool {
+	for _, x := range list {
+		if v.Cmp(x) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // bigFloatIsMultiple reports whether value/factor is an integer, computed exactly

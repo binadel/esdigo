@@ -37,4 +37,10 @@ const (
 	ExclusiveMinimum Code = "EXCLUSIVE_MINIMUM"
 	ExclusiveMaximum Code = "EXCLUSIVE_MAXIMUM"
 	MultipleOf       Code = "MULTIPLE_OF"
+	Enum             Code = "ENUM"
+	Const            Code = "CONST"
+	UniqueItems      Code = "UNIQUE_ITEMS"
+	Hostname         Code = "HOSTNAME"
+	UriReference     Code = "URI_REFERENCE"
+	JsonPointer      Code = "JSON_POINTER"
 )

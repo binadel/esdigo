@@ -167,4 +167,34 @@ var (
 		Code:    rules.MultipleOf,
 		Message: "value must be a multiple of the factor",
 	}
+
+	Enum = BasicError{
+		Code:    rules.Enum,
+		Message: "value must be one of the allowed values",
+	}
+
+	Const = BasicError{
+		Code:    rules.Const,
+		Message: "value must equal the required constant",
+	}
+
+	UniqueItems = &BasicError{
+		Code:    rules.UniqueItems,
+		Message: "array items must be unique",
+	}
+
+	InvalidHostname = &BasicError{
+		Code:    rules.Hostname,
+		Message: "value must be a valid hostname",
+	}
+
+	InvalidUriReference = &BasicError{
+		Code:    rules.UriReference,
+		Message: "value must be a valid URI reference",
+	}
+
+	InvalidJsonPointer = &BasicError{
+		Code:    rules.JsonPointer,
+		Message: "value must be a valid JSON pointer",
+	}
 )

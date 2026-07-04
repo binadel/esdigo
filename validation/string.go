@@ -5,6 +5,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/json/types"
 	"github.com/binadel/esdigo/utils"
 	"github.com/binadel/esdigo/validation/errors"
@@ -13,16 +14,21 @@ import (
 var regexCache = &utils.RegexCache{}
 
 type String struct {
-	Path      FieldPath
-	required  bool
-	notNull   bool
-	hasLen    bool
-	hasMinLen bool
-	hasMaxLen bool
-	len       int
-	minLen    int
-	maxLen    int
-	pattern   *regexp.Regexp
+	Path       FieldPath
+	required   bool
+	notNull    bool
+	hasLen     bool
+	hasMinLen  bool
+	hasMaxLen  bool
+	hasConst   bool
+	len        int
+	minLen     int
+	maxLen     int
+	pattern    *regexp.Regexp
+	constValue string
+	enum       []string
+	constJSON  []byte
+	enumJSON   []byte
 }
 
 func NewString(path ...string) *String {
@@ -58,6 +64,20 @@ func (s *String) MaxLength(maxLength int) *String {
 
 func (s *String) Pattern(pattern string) *String {
 	s.pattern = regexCache.MustGet(pattern)
+	return s
+}
+
+// Const requires the value to equal value (JSON-Schema const).
+func (s *String) Const(value string) *String {
+	s.hasConst, s.constValue = true, value
+	s.constJSON = stringJSON(value)
+	return s
+}
+
+// Enum requires the value to be one of values (JSON-Schema enum).
+func (s *String) Enum(values ...string) *String {
+	s.enum = values
+	s.enumJSON = stringsJSON(values)
 	return s
 }
 
@@ -99,11 +119,25 @@ func (s *String) Duration() *Duration {
 }
 
 func (s *String) Uri() *Uri {
-	return &Uri{*s}
+	return &Uri{String: *s}
+}
+
+// UriReference validates a URI reference (absolute or relative), unlike Uri which
+// requires an absolute URI.
+func (s *String) UriReference() *Uri {
+	return &Uri{String: *s, reference: true}
 }
 
 func (s *String) Uuid() *Uuid {
 	return &Uuid{*s, 0}
+}
+
+func (s *String) Hostname() *Hostname {
+	return &Hostname{*s}
+}
+
+func (s *String) JsonPointer() *JsonPointer {
+	return &JsonPointer{*s}
 }
 
 func (s *String) validateRaw(value types.String) []Error {
@@ -171,7 +205,45 @@ func (s *String) validateRaw(value types.String) []Error {
 		}
 	}
 
+	if s.hasConst && str != s.constValue {
+		errorList = append(errorList, rawParamError(errors.Const, errors.ParamKeyConst, s.constJSON))
+	}
+
+	if len(s.enum) > 0 && !containsString(s.enum, str) {
+		errorList = append(errorList, rawParamError(errors.Enum, errors.ParamKeyEnum, s.enumJSON))
+	}
+
 	return errorList
+}
+
+func containsString(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// stringJSON serializes one string as a quoted, escaped JSON value.
+func stringJSON(v string) []byte {
+	w := json.NewWriter(len(v) + 2)
+	w.WriteString(v)
+	return append([]byte(nil), w.Bytes()...)
+}
+
+// stringsJSON serializes values as a JSON array of quoted, escaped strings.
+func stringsJSON(values []string) []byte {
+	w := json.NewWriter(32)
+	w.BeginArray()
+	for i, v := range values {
+		if i > 0 {
+			w.ValueSeparator()
+		}
+		w.WriteString(v)
+	}
+	w.EndArray()
+	return append([]byte(nil), w.Bytes()...)
 }
 
 func (s *String) Validate(value types.String) Result[string] {

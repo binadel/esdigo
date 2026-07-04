@@ -152,19 +152,94 @@ func TestRegexFormat(t *testing.T) {
 	}
 }
 
+func TestHostname(t *testing.T) {
+	valid := []string{"example.com", "a", "foo-bar.example.co.uk", "123.example", "xn--d1acufc.xn--p1ai"}
+	for _, h := range valid {
+		v := readInto[types.String](`"` + h + `"`)
+		if r := NewString("h").Hostname().Validate(v); !r.IsValid() {
+			t.Errorf("hostname %q should be valid: %s", h, resultJSON(r))
+		}
+	}
+	invalid := []string{"-bad.com", "bad-.com", "ex..ample", "a_b", "", "has space"}
+	for _, h := range invalid {
+		v := readInto[types.String](`"` + h + `"`)
+		if r := NewString("h").Hostname().Validate(v); r.IsValid() {
+			t.Errorf("hostname %q should be invalid", h)
+		}
+	}
+	// error code
+	v := readInto[types.String](`"-bad"`)
+	mustContain(t, "hostname-code", resultJSON(NewString("h").Hostname().Validate(v)), `"HOSTNAME"`)
+}
+
+func TestUriReference(t *testing.T) {
+	// absolute passes both
+	abs := readInto[types.String](`"https://example.com/x"`)
+	if r := NewString("u").Uri().Validate(abs); !r.IsValid() {
+		t.Errorf("absolute uri should pass Uri: %s", resultJSON(r))
+	}
+	if r := NewString("u").UriReference().Validate(abs); !r.IsValid() {
+		t.Errorf("absolute uri should pass UriReference")
+	}
+	// relative fails Uri but passes UriReference
+	rel := readInto[types.String](`"/path/to/x"`)
+	if r := NewString("u").Uri().Validate(rel); r.IsValid() {
+		t.Errorf("relative reference should fail Uri (not absolute)")
+	} else {
+		mustContain(t, "uri-abs", resultJSON(r), `"URI"`)
+	}
+	if r := NewString("u").UriReference().Validate(rel); !r.IsValid() {
+		t.Errorf("relative reference should pass UriReference: %s", resultJSON(r))
+	}
+	// the .Reference() toggle is equivalent to UriReference()
+	if r := NewString("u").Uri().Reference().Validate(rel); !r.IsValid() {
+		t.Errorf("relative reference should pass Uri().Reference(): %s", resultJSON(r))
+	}
+	// unparseable fails UriReference with its own code
+	bad := readInto[types.String](`"://bad"`)
+	r := NewString("u").UriReference().Validate(bad)
+	if r.IsValid() {
+		t.Errorf("unparseable uri reference should fail")
+	} else {
+		mustContain(t, "uri-ref-code", resultJSON(r), `"URI_REFERENCE"`)
+	}
+}
+
+func TestJsonPointer(t *testing.T) {
+	valid := []string{"", "/foo/bar/0", "/a~0b/c~1d", "/", "/ "}
+	for _, p := range valid {
+		v := readInto[types.String](`"` + p + `"`)
+		if r := NewString("p").JsonPointer().Validate(v); !r.IsValid() {
+			t.Errorf("json pointer %q should be valid: %s", p, resultJSON(r))
+		}
+	}
+	invalid := []string{"foo", "/a~2b", "/a~", "bar/baz"}
+	for _, p := range invalid {
+		v := readInto[types.String](`"` + p + `"`)
+		if r := NewString("p").JsonPointer().Validate(v); r.IsValid() {
+			t.Errorf("json pointer %q should be invalid", p)
+		}
+	}
+	v := readInto[types.String](`"foo"`)
+	mustContain(t, "jsonptr-code", resultJSON(NewString("p").JsonPointer().Validate(v)), `"JSON_POINTER"`)
+}
+
 // TestFormatNullGuard confirms every format validator accepts an allowed null.
 func TestFormatNullGuard(t *testing.T) {
 	null := func() types.String { return readInto[types.String]("null") }
 	checks := map[string]bool{
-		"email":    isValid(NewString("f").Email().Validate(null())),
-		"ip":       isValid(NewString("f").IP().Validate(null())),
-		"uri":      isValid(NewString("f").Uri().Validate(null())),
-		"uuid":     isValid(NewString("f").Uuid().Validate(null())),
-		"date":     isValid(NewString("f").Date().Validate(null())),
-		"time":     isValid(NewString("f").Time().Validate(null())),
-		"datetime": isValid(NewString("f").DateTime().Validate(null())),
-		"duration": isValid(NewString("f").Duration().Validate(null())),
-		"regex":    isValid(NewString("f").Regex().Validate(null())),
+		"email":        isValid(NewString("f").Email().Validate(null())),
+		"ip":           isValid(NewString("f").IP().Validate(null())),
+		"uri":          isValid(NewString("f").Uri().Validate(null())),
+		"uriReference": isValid(NewString("f").UriReference().Validate(null())),
+		"uuid":         isValid(NewString("f").Uuid().Validate(null())),
+		"date":         isValid(NewString("f").Date().Validate(null())),
+		"time":         isValid(NewString("f").Time().Validate(null())),
+		"datetime":     isValid(NewString("f").DateTime().Validate(null())),
+		"duration":     isValid(NewString("f").Duration().Validate(null())),
+		"regex":        isValid(NewString("f").Regex().Validate(null())),
+		"hostname":     isValid(NewString("f").Hostname().Validate(null())),
+		"jsonPointer":  isValid(NewString("f").JsonPointer().Validate(null())),
 	}
 	for name, valid := range checks {
 		if !valid {

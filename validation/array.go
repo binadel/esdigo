@@ -13,6 +13,7 @@ type Array[V any, PV json.ValueReadWriter[V]] struct {
 	hasExactItems bool
 	hasMinItems   bool
 	hasMaxItems   bool
+	uniqueItems   bool
 	exactItems    int
 	minItems      int
 	maxItems      int
@@ -46,6 +47,13 @@ func (a *Array[V, PV]) MinItems(minItems int) *Array[V, PV] {
 
 func (a *Array[V, PV]) MaxItems(maxItems int) *Array[V, PV] {
 	a.hasMaxItems, a.maxItems = true, maxItems
+	return a
+}
+
+// UniqueItems requires every element to be distinct (JSON-Schema uniqueItems).
+// Elements are compared by their canonical JSON serialization.
+func (a *Array[V, PV]) UniqueItems() *Array[V, PV] {
+	a.uniqueItems = true
 	return a
 }
 
@@ -97,7 +105,29 @@ func (a *Array[V, PV]) validateRaw(value types.Array[V, PV]) []Error {
 		})
 	}
 
+	if a.uniqueItems && hasDuplicateItems(value.Value) {
+		errorList = append(errorList, errors.UniqueItems)
+	}
+
 	return errorList
+}
+
+// hasDuplicateItems reports whether any two elements share a canonical JSON form.
+// The writer's output is deterministic (no whitespace, fixed field order), so
+// serialized-string equality models JSON value equality for uniqueItems.
+func hasDuplicateItems[PV json.ValueWriter](items []PV) bool {
+	seen := make(map[string]struct{}, len(items))
+	w := json.NewWriter(64)
+	for _, item := range items {
+		w.Reset()
+		item.WriteJSON(w)
+		key := string(w.Bytes())
+		if _, dup := seen[key]; dup {
+			return true
+		}
+		seen[key] = struct{}{}
+	}
+	return false
 }
 
 func (a *Array[V, PV]) Validate(value types.Array[V, PV]) Result[[]PV] {

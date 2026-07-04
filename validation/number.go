@@ -53,9 +53,14 @@ type Number[V orderedNumber] struct {
 	hasMin, hasMax     bool
 	hasExMin, hasExMax bool
 	hasMultiple        bool
+	hasConst           bool
 	min, max           V
 	exMin, exMax       V
 	multiple           V
+	constValue         V
+	enum               []V
+	constJSON          []byte
+	enumJSON           []byte
 }
 
 // NewNumber creates a numeric field validator for V at the given path, e.g.
@@ -106,6 +111,20 @@ func (n *Number[V]) MultipleOf(v V) *Number[V] {
 	return n
 }
 
+// Const requires the value to equal v (JSON-Schema const).
+func (n *Number[V]) Const(v V) *Number[V] {
+	n.hasConst, n.constValue = true, v
+	n.constJSON = []byte(fmt.Sprintf("%v", v))
+	return n
+}
+
+// Enum requires the value to be one of values (JSON-Schema enum).
+func (n *Number[V]) Enum(values ...V) *Number[V] {
+	n.enum = values
+	n.enumJSON = numbersJSON(values)
+	return n
+}
+
 // Validate checks a decoded numeric field and returns a typed Result. On success
 // Result.Value holds the number; otherwise Result.Errors describes the failure.
 func (n *Number[V]) Validate(field numberField[V]) Result[V] {
@@ -136,6 +155,34 @@ func (n *Number[V]) checkBounds(value V, result *Result[V]) {
 	if n.hasMultiple && !isMultipleOf(value, n.multiple) {
 		result.Errors = append(result.Errors, numberBoundError(errors.MultipleOf, errors.ParamKeyMultipleOf, n.multiple))
 	}
+	if n.hasConst && value != n.constValue {
+		result.Errors = append(result.Errors, rawParamError(errors.Const, errors.ParamKeyConst, n.constJSON))
+	}
+	if len(n.enum) > 0 && !containsOrdered(n.enum, value) {
+		result.Errors = append(result.Errors, rawParamError(errors.Enum, errors.ParamKeyEnum, n.enumJSON))
+	}
+}
+
+// numbersJSON renders values as a JSON array of numbers, reusing the %v form the
+// bound errors use so any scalar V serializes without knowing its type here.
+func numbersJSON[V orderedNumber](values []V) []byte {
+	b := []byte{'['}
+	for i, v := range values {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = append(b, fmt.Sprintf("%v", v)...)
+	}
+	return append(b, ']')
+}
+
+func containsOrdered[V orderedNumber](list []V, v V) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // isMultipleOf reports whether value is an integer multiple of factor. It compares
@@ -194,6 +241,16 @@ func reasonError(typ json.NumberType) Error {
 // JSON number bytes.
 func paramError(base errors.BasicError, key string, value []byte) Error {
 	return &errors.NumberParamError{
+		BasicError: base,
+		ParamKey:   key,
+		ParamValue: value,
+	}
+}
+
+// rawParamError builds an error carrying a pre-serialized JSON parameter (an enum
+// array or a const value) written verbatim.
+func rawParamError(base errors.BasicError, key string, value []byte) Error {
+	return &errors.RawParamError{
 		BasicError: base,
 		ParamKey:   key,
 		ParamValue: value,
