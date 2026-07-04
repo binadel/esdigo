@@ -1,5 +1,7 @@
 package json
 
+// ValueType tags the kind of JSON value held by a Value. Booleans get their own
+// tags (ValueTypeTrue/False) so no boolean needs to be boxed in the Payload.
 type ValueType int
 
 const (
@@ -12,7 +14,18 @@ const (
 	ValueTypeObject
 )
 
-// Value represents a JSON value that holds the type and payload.
+// Value is a dynamically-typed JSON value — the node type of the untyped DOM
+// produced by ReadValue/ReadJSON. Type selects how to interpret Payload:
+//
+//	ValueTypeNull, ValueTypeTrue, ValueTypeFalse → Payload is nil (Type says it all)
+//	ValueTypeNumber                              → Payload is []byte (the raw token, kept
+//	                                                lossless rather than parsed to float64)
+//	ValueTypeString                              → Payload is string
+//	ValueTypeArray                               → Payload is []Value
+//	ValueTypeObject                              → Payload is map[string]Value
+//
+// Construct Values with the reader, not by hand: WriteValue relies on Type and
+// Payload agreeing, and a mismatched pair is written as a failure (false).
 type Value struct {
 	Type    ValueType
 	Payload any

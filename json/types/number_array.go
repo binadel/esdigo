@@ -6,6 +6,8 @@ import (
 	"github.com/binadel/esdigo/json"
 )
 
+// The exported aliases pair NumberArray with a codec for each backing type — the
+// array counterparts of the Number aliases (Int64Array, Float64Array, ...).
 type (
 	IntArray    = NumberArray[int, scalarInt[int]]
 	Int8Array   = NumberArray[int8, scalarInt[int8]]
@@ -27,6 +29,10 @@ type (
 	RawNumberArray = NumberArray[[]byte, rawCodec]
 )
 
+// NumberArray is a JSON array of numbers decoded by codec C. Unlike the generic
+// Array it stores its elements unboxed in a []V and decodes each with the codec
+// directly, so it is leaner for scalar numbers. It carries the usual tri-state:
+// Present, Defined, and Valid. Use the aliases above.
 type NumberArray[V any, C numberCodec[V]] struct {
 	Present bool
 	Defined bool
@@ -34,18 +40,23 @@ type NumberArray[V any, C numberCodec[V]] struct {
 	Value   []V
 }
 
+// IsPresent reports whether the field appeared in the input.
 func (a *NumberArray[V, C]) IsPresent() bool {
 	return a.Present
 }
 
+// IsDefined reports whether the field was present and non-null.
 func (a *NumberArray[V, C]) IsDefined() bool {
 	return a.Defined
 }
 
+// IsValid reports whether the array was well-formed and every element was a
+// representable number (no element was dropped).
 func (a *NumberArray[V, C]) IsValid() bool {
 	return a.Valid
 }
 
+// Set assigns value and marks the field present, defined, and valid.
 func (a *NumberArray[V, C]) Set(value []V) {
 	*a = NumberArray[V, C]{
 		Present: true,
@@ -55,12 +66,15 @@ func (a *NumberArray[V, C]) Set(value []V) {
 	}
 }
 
+// SetNull marks the field present but explicitly null (not defined).
 func (a *NumberArray[V, C]) SetNull() {
 	*a = NumberArray[V, C]{
 		Present: true,
 	}
 }
 
+// WriteJSON writes the array, or null when the field is not defined. It returns
+// false only when the field is defined but invalid.
 func (a *NumberArray[V, C]) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
@@ -82,6 +96,10 @@ func (a *NumberArray[V, C]) WriteJSON(w *json.Writer) bool {
 	return true
 }
 
+// ReadJSON reads a JSON array of numbers (or null) into a. An element that is not
+// a number, or is a number that does not fit V, is dropped and marks the array
+// Valid=false (representable elements are still kept in Value). Only a malformed
+// array — an unskippable element or a missing separator — stops the reader.
 func (a *NumberArray[V, C]) ReadJSON(r *json.Reader) bool {
 	*a = NumberArray[V, C]{
 		Present: true,

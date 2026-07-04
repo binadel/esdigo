@@ -10,11 +10,20 @@ import (
 // uint64MaxCutoff = math.MaxUint64 / 10, used to calculate exact overflow
 const uint64MaxCutoff = 1844674407370955161
 
+// NumberType is how ReadNumber classifies a parsed number — whether it is an
+// integer, has a fractional part, is too large for NumberValue's fixed fields,
+// or is too large to materialize at all.
 type NumberType uint8
 
 const (
+	// NumberTypeInteger is an integer value. It includes forms whose fractional
+	// part is zero, such as "1e3", "1.0" and "120e-1" (JSON Schema's rule).
 	NumberTypeInteger = NumberType(iota)
+	// NumberTypeReal is a number with a non-zero fractional part (e.g. "1.5").
 	NumberTypeReal
+	// NumberTypeBig is a valid number whose coefficient overflows uint64 or whose
+	// exponent leaves int16 range — representable, but not in NumberValue's fixed
+	// fields. Read the raw token instead (ReadRawNumber) and use big.Int/Float/Rat.
 	NumberTypeBig
 	// NumberTypeOverflow marks a number whose decimal magnitude (integer digits +
 	// exponent) exceeds maxNumberDigits — too large to materialize as an exact
@@ -35,17 +44,28 @@ const (
 // real integer while catching amplification such as "1e999999999".
 const maxNumberDigits = 1 << 16
 
+// NumberValue is the decomposed form of a JSON number returned by ReadNumber.
+// The value is Coefficient × 10^Exponent, negated when Negative, and Type records
+// how it was classified. Holding it in fixed fields avoids allocation for the
+// common case; numbers classified NumberTypeBig or NumberTypeOverflow do not fit
+// here and must be taken from the raw token instead.
 type NumberValue struct {
-	Negative    bool
-	Type        NumberType
-	Exponent    int16
-	Coefficient uint64
+	Negative    bool       // the number had a leading '-'
+	Type        NumberType // classification (integer, real, big, overflow)
+	Exponent    int16      // power-of-ten scale applied to Coefficient
+	Coefficient uint64     // the significant digits as an unsigned integer
 }
 
+// WriteRawNumber appends a pre-formatted number token verbatim. The bytes are not
+// validated — the caller guarantees they are a well-formed JSON number.
 func (w *Writer) WriteRawNumber(value []byte) {
 	w.data = append(w.data, value...)
 }
 
+// WriteNumber writes a NumberValue as its coefficient followed by an "e" exponent
+// when the exponent is non-zero. It is only correct for NumberTypeInteger/Real
+// values that fit the fixed fields — NumberTypeBig/Overflow carry no usable
+// Coefficient, so write those via the typed writers or WriteRawNumber.
 func (w *Writer) WriteNumber(value NumberValue) {
 	if value.Negative {
 		w.data = append(w.data, '-')
@@ -59,14 +79,18 @@ func (w *Writer) WriteNumber(value NumberValue) {
 	}
 }
 
+// WriteIntNumber writes a signed integer in base 10.
 func (w *Writer) WriteIntNumber(value int64) {
 	w.data = strconv.AppendInt(w.data, value, 10)
 }
 
+// WriteUIntNumber writes an unsigned integer in base 10.
 func (w *Writer) WriteUIntNumber(value uint64) {
 	w.data = strconv.AppendUint(w.data, value, 10)
 }
 
+// WriteBigIntNumber writes an arbitrary-precision integer in base 10, or null if
+// value is nil.
 func (w *Writer) WriteBigIntNumber(value *big.Int) {
 	if value == nil {
 		w.WriteNull()
@@ -75,6 +99,9 @@ func (w *Writer) WriteBigIntNumber(value *big.Int) {
 	}
 }
 
+// WriteFloatNumber writes value in the shortest form that round-trips at the
+// given bitSize (32 or 64). NaN and ±Inf have no JSON representation and are
+// written as null.
 func (w *Writer) WriteFloatNumber(value float64, bitSize int) {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		w.WriteNull()
@@ -83,6 +110,8 @@ func (w *Writer) WriteFloatNumber(value float64, bitSize int) {
 	}
 }
 
+// WriteBigFloatNumber writes an arbitrary-precision float in its shortest form.
+// A nil or infinite value is written as null.
 func (w *Writer) WriteBigFloatNumber(value *big.Float) {
 	if value == nil || value.IsInf() {
 		w.WriteNull()
@@ -91,6 +120,9 @@ func (w *Writer) WriteBigFloatNumber(value *big.Float) {
 	}
 }
 
+// ReadRawNumber returns the raw source bytes of the next JSON number without
+// decoding it, reporting false on a malformed number. The slice aliases the
+// input buffer. Use this when full precision is needed (big integers/floats).
 func (r *Reader) ReadRawNumber() ([]byte, bool) {
 	start := r.pos
 	if r.SkipNumber() {
@@ -99,6 +131,12 @@ func (r *Reader) ReadRawNumber() ([]byte, bool) {
 	return nil, false
 }
 
+// ReadNumber decodes the next JSON number into a NumberValue and also returns its
+// raw source bytes (which alias the input). ok is false only when the number is
+// malformed — that sets a reader error. A well-formed but oversized number
+// returns ok=true with Type NumberTypeBig or NumberTypeOverflow; the caller
+// decides what to do with it (see NumberType). This is NOT how the reader signals
+// "unusable value" — that is the codec/wrapper's job.
 func (r *Reader) ReadNumber() (value NumberValue, raw []byte, ok bool) {
 	if r.err != nil {
 		return
@@ -317,6 +355,8 @@ func skipDigits(b []byte) int {
 	return n
 }
 
+// SkipNumber validates and advances past the next JSON number without decoding
+// it, reporting false (and setting a reader error) on a malformed number.
 func (r *Reader) SkipNumber() (ok bool) {
 	if r.err != nil {
 		return

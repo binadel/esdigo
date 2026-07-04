@@ -67,18 +67,26 @@ func indexSpecial(b []byte) int {
 	return n
 }
 
+// WriteString writes value as a quoted, escaped JSON string. Only the characters
+// JSON requires are escaped (quote, backslash, and control characters); '<', '>',
+// '&' and U+2028/2029 are emitted raw, so the output is not HTML/JS-embed safe.
 func (w *Writer) WriteString(value string) {
 	w.data = append(w.data, '"')
 	w.writeEscapedString(utils.UnsafeBytes(value))
 	w.data = append(w.data, '"')
 }
 
+// WriteStringBytes is WriteString for a []byte, avoiding a []byte→string
+// conversion at the call site.
 func (w *Writer) WriteStringBytes(value []byte) {
 	w.data = append(w.data, '"')
 	w.writeEscapedString(value)
 	w.data = append(w.data, '"')
 }
 
+// ReadString reads the next JSON string and returns its decoded contents as a
+// string. Unlike ReadStringBytes the result is always a copy, so it stays valid
+// after the input buffer is reused.
 func (r *Reader) ReadString() (string, bool) {
 	if bytes, ok := r.ReadStringBytes(); ok {
 		return string(bytes), true
@@ -86,6 +94,14 @@ func (r *Reader) ReadString() (string, bool) {
 	return "", false
 }
 
+// ReadStringBytes reads the next JSON string and returns its decoded bytes,
+// resolving escapes. It returns false without consuming input if the next value
+// is not a string, and sets a reader error only for a malformed string.
+//
+// ALIASING: when the string contains no escapes the result is a zero-copy
+// sub-slice of the input buffer; only an escaped string is a fresh allocation. Do
+// not retain the result across a reuse of the input buffer (or copy it, e.g. via
+// ReadString) if you might.
 func (r *Reader) ReadStringBytes() ([]byte, bool) {
 	if r.err != nil {
 		return nil, false
@@ -127,6 +143,9 @@ func (r *Reader) ReadStringBytes() ([]byte, bool) {
 	return nil, false
 }
 
+// SkipString validates and advances past the next JSON string without decoding
+// it. Like ReadStringBytes it returns false (without consuming) on a non-string,
+// and sets a reader error on a malformed one.
 func (r *Reader) SkipString() bool {
 	if r.err != nil {
 		return false

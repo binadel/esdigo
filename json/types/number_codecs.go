@@ -10,6 +10,8 @@ import (
 	"github.com/binadel/esdigo/utils"
 )
 
+// signed, unsigned, integer and float are the type sets the scalar codecs range
+// over, so a single generic implementation covers every width.
 type signed interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64
 }
@@ -47,6 +49,8 @@ type numberCodec[V any] interface {
 	write(w *json.Writer, v V)
 }
 
+// scalarInt decodes a JSON number into a fixed-width integer T from the reader's
+// structured NumberValue — no re-parsing of the token.
 type scalarInt[T integer] struct{}
 
 func (scalarInt[T]) decode(r *json.Reader) (T, bool) {
@@ -59,6 +63,8 @@ func (scalarInt[T]) decode(r *json.Reader) (T, bool) {
 }
 
 func (scalarInt[T]) write(w *json.Writer, v T) {
+	// zero-1 > zero is true only for unsigned T (it wraps to the max value), so
+	// this selects the signed/unsigned writer at compile time per instantiation.
 	var zero T
 	if zero-1 > zero {
 		w.WriteUIntNumber(uint64(v))
@@ -124,6 +130,9 @@ func intFromNumber[T integer](num json.NumberValue) (value T, ok bool) {
 
 // --- scalar floats ---
 
+// scalarFloat decodes a JSON number into float32/float64 via strconv.ParseFloat
+// on the raw token (correctly rounded). A value that overflows the float range
+// makes ParseFloat report an error, leaving the field invalid.
 type scalarFloat[T float] struct{}
 
 func (scalarFloat[T]) decode(r *json.Reader) (T, bool) {
@@ -170,6 +179,9 @@ func (bigIntCodec) write(w *json.Writer, v *big.Int) {
 	w.WriteBigIntNumber(v)
 }
 
+// bigFloatCodec decodes an arbitrary-precision float. It is safe against huge
+// exponents by construction — big.Float has a bounded binary exponent, so an
+// out-of-range magnitude yields an error rather than a giant allocation.
 type bigFloatCodec struct{}
 
 func (bigFloatCodec) decode(r *json.Reader) (*big.Float, bool) {
@@ -194,6 +206,9 @@ func (bigFloatCodec) write(w *json.Writer, v *big.Float) {
 	w.WriteBigFloatNumber(v)
 }
 
+// rawCodec keeps a number as its raw source bytes without interpreting it — the
+// backing for RawNumber. It never rejects a well-formed number, so it is the way
+// to preserve values that no fixed Go type can hold exactly.
 type rawCodec struct{}
 
 func (rawCodec) decode(r *json.Reader) ([]byte, bool) {
@@ -201,7 +216,7 @@ func (rawCodec) decode(r *json.Reader) ([]byte, bool) {
 }
 
 func (rawCodec) write(w *json.Writer, v []byte) {
-	if len(v) == 0 {
+	if len(v) == 0 { // nothing stored (e.g. a zero-value RawNumber) → null
 		w.WriteNull()
 		return
 	}
