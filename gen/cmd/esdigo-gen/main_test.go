@@ -77,6 +77,85 @@ func TestRunTooManyArgs(t *testing.T) {
 	}
 }
 
+func TestRunDirectory(t *testing.T) {
+	in := t.TempDir()
+	out := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(in, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("person.schema.json", objectSchema)
+	write("account.json", `{"type":"object","properties":{"id":{"type":"integer"}}}`)
+	write("notes.txt", "ignored") // non-json is skipped
+
+	var errb bytes.Buffer
+	if code := run([]string{"-pkg", "demo", "-outdir", out, in}, nil, io.Discard, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+
+	person, err := os.ReadFile(filepath.Join(out, "person.go"))
+	if err != nil {
+		t.Fatalf("person.go: %v", err)
+	}
+	if !strings.Contains(string(person), "package demo") || !strings.Contains(string(person), "type Person struct") {
+		t.Errorf("person.go wrong: %s", person)
+	}
+	if _, err := os.Stat(filepath.Join(out, "account.go")); err != nil {
+		t.Errorf("account.go should exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "notes.go")); err == nil {
+		t.Errorf("notes.txt should have been skipped")
+	}
+}
+
+func TestRunDirectoryDefaultsOutdirToInput(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "thing.schema.json"), []byte(objectSchema), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	if code := run([]string{"-pkg", "demo", dir}, nil, io.Discard, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "thing.go")); err != nil {
+		t.Errorf("thing.go should be written alongside the schema: %v", err)
+	}
+}
+
+func TestRunDirectoryEmpty(t *testing.T) {
+	if code := run([]string{"-pkg", "demo", t.TempDir()}, nil, io.Discard, io.Discard); code != 1 {
+		t.Errorf("empty dir should exit 1, got %d", code)
+	}
+}
+
+func TestRunDirectoryBadSchema(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.json"), []byte(`{"type":"string"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	if code := run([]string{"-pkg", "demo", dir}, nil, io.Discard, &errb); code != 1 {
+		t.Errorf("bad schema in dir should exit 1, got %d", code)
+	}
+	if !strings.Contains(errb.String(), "bad.json") {
+		t.Errorf("error should name the offending file: %q", errb.String())
+	}
+}
+
+func TestOutFileName(t *testing.T) {
+	cases := map[string]string{
+		"person.schema.json": "person.go",
+		"account.json":       "account.go",
+		"a-b.schema.json":    "a-b.go",
+	}
+	for in, want := range cases {
+		if got := outFileName(in); got != want {
+			t.Errorf("outFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestTypeNameFromFile(t *testing.T) {
 	cases := map[string]string{
 		"person.schema.json": "person",

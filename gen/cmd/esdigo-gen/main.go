@@ -3,14 +3,16 @@
 //
 // Usage:
 //
-//	esdigo-gen [flags] <schema.json>
+//	esdigo-gen [flags] <schema.json>    # one schema -> -o / stdout
 //	esdigo-gen [flags] < schema.json    # read from stdin
+//	esdigo-gen [flags] <schema-dir>     # every *.json in the dir -> <base>.go
 //
 // Flags:
 //
-//	-pkg   output package name (default "models")
-//	-name  root Go type name (default: derived from the input filename)
-//	-o     output file (default: stdout)
+//	-pkg     output package name (default "models")
+//	-name    root Go type name (single-file only; default: derived from the filename)
+//	-o       output file for single-file mode (default: stdout)
+//	-outdir  output directory for directory mode (default: the input directory)
 package main
 
 import (
@@ -35,17 +37,30 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	pkg := fs.String("pkg", "models", "output package name")
 	name := fs.String("name", "", "root Go type name (default: derived from the input filename)")
 	out := fs.String("o", "", "output file (default: stdout)")
+	outdir := fs.String("outdir", "", "output directory for directory mode (default: the input directory)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json>")
-		fmt.Fprintln(stderr, "reads a JSON Schema and writes generated Go; omit the file to read stdin.")
+		fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json|schema-dir>")
+		fmt.Fprintln(stderr, "reads a JSON Schema (or a directory of them) and writes generated Go; omit the file to read stdin.")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "error: expected at most one schema file")
+		fmt.Fprintln(stderr, "error: expected at most one schema file or directory")
 		return 2
+	}
+
+	// A directory input generates one file per schema.
+	if path := fs.Arg(0); path != "" {
+		info, err := os.Stat(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %v\n", err)
+			return 1
+		}
+		if info.IsDir() {
+			return runDir(path, *pkg, *outdir, stderr)
+		}
 	}
 
 	data, typeName, err := readSchema(fs.Arg(0), *name, stdin)
@@ -72,6 +87,63 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// runDir generates one Go file per *.json schema in dir, into outdir (which
+// defaults to dir). Each schema is generated independently — cross-file $ref and
+// shared-type deduplication are not resolved, so a type defined in two schemas
+// would collide.
+func runDir(dir, pkg, outdir string, stderr io.Writer) int {
+	if outdir == "" {
+		outdir = dir
+	}
+	if err := os.MkdirAll(outdir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	generated := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
+			return 1
+		}
+		src, err := gen.Generate(data, pkg, typeNameFromFile(e.Name()))
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
+			return 1
+		}
+		outPath := filepath.Join(outdir, outFileName(e.Name()))
+		if err := os.WriteFile(outPath, src, 0o644); err != nil {
+			fmt.Fprintf(stderr, "error: writing %s: %v\n", outPath, err)
+			return 1
+		}
+		generated++
+	}
+
+	if generated == 0 {
+		fmt.Fprintf(stderr, "error: no .json schema files in %s\n", dir)
+		return 1
+	}
+	return 0
+}
+
+// outFileName is the generated Go filename for a schema file, e.g.
+// "person.schema.json" -> "person.go".
+func outFileName(name string) string {
+	base := strings.TrimSuffix(name, ".json")
+	base = strings.TrimSuffix(base, ".schema")
+	return base + ".go"
 }
 
 // readSchema loads the schema from path (or stdin when path is empty) and resolves
