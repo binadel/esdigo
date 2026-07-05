@@ -127,6 +127,33 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	}, nil
 }
 
+// BuildAll resolves a set of named schemas (e.g. OpenAPI components) into a
+// generated file: a message for every object schema, with $ref resolved against
+// the whole set. Non-object schemas become messages only where a ref inlines them.
+func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
+	b := &builder{
+		defs:    schemas,
+		built:   map[string]bool{},
+		imports: map[string]bool{},
+	}
+
+	for _, key := range sortedKeys(schemas) {
+		if schemas[key].Type.Primary() == "object" {
+			if err := b.buildMessage(goName(key), schemas[key]); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
+
+	return &File{
+		Package:  pkg,
+		Imports:  buildImports(b.imports),
+		Messages: b.messages,
+	}, nil
+}
+
 // buildMessage produces the message named goName for object schema s (once).
 func (b *builder) buildMessage(name string, s *schema.Schema) error {
 	if b.built[name] {

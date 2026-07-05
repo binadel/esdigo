@@ -58,6 +58,34 @@ func Parse(data []byte) (*Schema, error) {
 	return &s, nil
 }
 
+// OpenAPIDoc is the slice of an OpenAPI 3.1 document the generator reads: its
+// component schemas (which use the JSON Schema 2020-12 dialect).
+type OpenAPIDoc struct {
+	OpenAPI    string `json:"openapi"`
+	Components struct {
+		Schemas map[string]*Schema `json:"schemas"`
+	} `json:"components"`
+}
+
+// ParseOpenAPI unmarshals an OpenAPI document.
+func ParseOpenAPI(data []byte) (*OpenAPIDoc, error) {
+	var doc OpenAPIDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
+// IsOpenAPI reports whether data looks like an OpenAPI document rather than a bare
+// JSON Schema — it has an "openapi" version or a components.schemas map.
+func IsOpenAPI(data []byte) bool {
+	doc, err := ParseOpenAPI(data)
+	if err != nil {
+		return false
+	}
+	return doc.OpenAPI != "" || len(doc.Components.Schemas) > 0
+}
+
 // AllDefs merges the named subschemas from "$defs" and "definitions", with "$defs"
 // taking precedence on a key collision.
 func (s *Schema) AllDefs() map[string]*Schema {

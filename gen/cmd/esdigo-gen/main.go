@@ -69,7 +69,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	src, err := gen.Generate(data, *pkg, typeName)
+	src, err := gen.GenerateAuto(data, *pkg, typeName)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -118,7 +118,7 @@ func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
 			return 1
 		}
-		src, err := gen.Generate(data, pkg, typeNameFromFile(e.Name()))
+		src, err := gen.GenerateAuto(data, pkg, typeNameFromFile(e.Name()))
 		if err != nil {
 			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
 			return 1

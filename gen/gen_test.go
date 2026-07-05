@@ -4,23 +4,26 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/binadel/esdigo/gen/schema"
 )
 
 // TestGenerateGolden regenerates each committed, compiled golden file from its
 // schema and asserts it still matches — so any generator drift (or a change that
 // would break the example) fails here.
 func TestGenerateGolden(t *testing.T) {
-	cases := []struct{ schema, golden, name string }{
-		{"testdata/person.schema.json", "example/person.go", "Person"},
-		{"testdata/order.schema.json", "example/order.go", "Order"},
+	cases := []struct{ schema, golden, pkg, name string }{
+		{"testdata/person.schema.json", "example/person.go", "example", "Person"},
+		{"testdata/order.schema.json", "example/order.go", "example", "Order"},
+		{"testdata/api.openapi.json", "example/api/api.go", "api", ""},
 	}
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
+		t.Run(c.golden, func(t *testing.T) {
 			schema, err := os.ReadFile(c.schema)
 			if err != nil {
 				t.Fatalf("read schema: %v", err)
 			}
-			got, err := Generate(schema, "example", c.name)
+			got, err := GenerateAuto(schema, c.pkg, c.name)
 			if err != nil {
 				t.Fatalf("generate: %v", err)
 			}
@@ -33,6 +36,37 @@ func TestGenerateGolden(t *testing.T) {
 					"Regenerate the golden file if the change is intended.\n--- got ---\n%s", c.golden, got)
 			}
 		})
+	}
+}
+
+// TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
+// no-components / detection behavior.
+func TestGenerateOpenAPI(t *testing.T) {
+	doc := `{"openapi":"3.1.0","components":{"schemas":{
+		"A":{"type":"object","properties":{"b":{"$ref":"#/components/schemas/B"}}},
+		"B":{"type":"object","properties":{"x":{"type":"string"}}}
+	}}}`
+	if !schema.IsOpenAPI([]byte(doc)) {
+		t.Fatalf("should detect OpenAPI")
+	}
+	out, err := GenerateOpenAPI([]byte(doc), "api")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type A struct", "type B struct", "types.Object[B, *B]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+
+	if _, err := GenerateOpenAPI([]byte(`{"openapi":"3.1.0"}`), "api"); err == nil {
+		t.Errorf("empty components should error")
+	}
+	// GenerateAuto routes a bare JSON Schema to the named single-root path.
+	single, err := GenerateAuto([]byte(`{"type":"object","properties":{"n":{"type":"string"}}}`), "m", "Thing")
+	if err != nil || !strings.Contains(string(single), "type Thing struct") {
+		t.Errorf("auto should route a bare schema to Generate: %v", err)
 	}
 }
 
