@@ -13,7 +13,7 @@
           "address": { "$ref": "#/components/schemas/Address" },
           "roles": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": { "type": "string", "minLength": 2 },
             "uniqueItems": true
           }
         }

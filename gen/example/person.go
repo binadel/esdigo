@@ -254,16 +254,37 @@ func (v *PersonValidator) Validate(p *Person) *ValidatedPerson {
 }
 
 func (v *ValidatedPerson) IsValid() bool {
-	return v.Object.IsValid() &&
-		v.Active.IsValid() &&
-		v.Age.IsValid() &&
-		v.Email.IsValid() &&
-		v.FirstName.IsValid() &&
-		v.Homepage.IsValid() &&
-		v.Id.IsValid() &&
-		v.LastName.IsValid() &&
-		v.Role.IsValid() &&
-		v.Score.IsValid()
+	if !v.Object.IsValid() {
+		return false
+	}
+	if !v.Active.IsValid() {
+		return false
+	}
+	if !v.Age.IsValid() {
+		return false
+	}
+	if !v.Email.IsValid() {
+		return false
+	}
+	if !v.FirstName.IsValid() {
+		return false
+	}
+	if !v.Homepage.IsValid() {
+		return false
+	}
+	if !v.Id.IsValid() {
+		return false
+	}
+	if !v.LastName.IsValid() {
+		return false
+	}
+	if !v.Role.IsValid() {
+		return false
+	}
+	if !v.Score.IsValid() {
+		return false
+	}
+	return true
 }
 
 func (v *ValidatedPerson) Collect(out *[]validation.FieldResult) {

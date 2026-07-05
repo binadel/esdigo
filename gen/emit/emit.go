@@ -174,12 +174,16 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "type Validated%s struct {\n", m.Name)
 	fmt.Fprintf(b, "\tObject validation.Result[*%s]\n", m.Name)
 	for _, f := range m.Fields {
-		switch {
-		case !f.Validate:
-		case f.IsObject:
+		if !f.Validate {
+			continue
+		}
+		if f.IsObject {
 			fmt.Fprintf(b, "\t%s *Validated%s\n", f.GoName, f.ChildType)
-		default:
-			fmt.Fprintf(b, "\t%s validation.Result[%s]\n", f.GoName, f.ResultType)
+			continue
+		}
+		fmt.Fprintf(b, "\t%s validation.Result[%s]\n", f.GoName, f.ResultType)
+		if f.ElemValidate {
+			fmt.Fprintf(b, "\t%sItems []%s\n", f.GoName, f.ElemItemsType)
 		}
 	}
 	b.WriteString("}\n\n")
@@ -187,13 +191,17 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	// <Message>Validator
 	fmt.Fprintf(b, "type %sValidator struct {\n", m.Name)
 	for _, f := range m.Fields {
-		switch {
-		case !f.Validate:
-		case f.IsObject:
+		if !f.Validate {
+			continue
+		}
+		if f.IsObject {
 			fmt.Fprintf(b, "\t%s *%sValidator\n", f.GoName, f.ChildType)
 			fmt.Fprintf(b, "\t%s *validation.Object[%s, *%s]\n", objField(f.GoName), f.ChildType, f.ChildType)
-		default:
-			fmt.Fprintf(b, "\t%s %s\n", f.GoName, f.ValidatorType)
+			continue
+		}
+		fmt.Fprintf(b, "\t%s %s\n", f.GoName, f.ValidatorType)
+		if f.ElemValidate {
+			fmt.Fprintf(b, "\t%s %s\n", elemField(f.GoName), f.ElemValidatorType)
 		}
 	}
 	b.WriteString("}\n\n")
@@ -202,13 +210,17 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "func New%sValidator(base ...string) *%sValidator {\n", m.Name, m.Name)
 	fmt.Fprintf(b, "\treturn &%sValidator{\n", m.Name)
 	for _, f := range m.Fields {
-		switch {
-		case !f.Validate:
-		case f.IsObject:
+		if !f.Validate {
+			continue
+		}
+		if f.IsObject {
 			fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.ChildNewExpr)
 			fmt.Fprintf(b, "\t\t%s: %s,\n", objField(f.GoName), f.ObjectNewExpr)
-		default:
-			fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.NewExpr)
+			continue
+		}
+		fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.NewExpr)
+		if f.ElemValidate {
+			fmt.Fprintf(b, "\t\t%s: %s,\n", elemField(f.GoName), f.ElemNewExpr)
 		}
 	}
 	b.WriteString("\t}\n}\n\n")
@@ -218,46 +230,69 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "\tif %s == nil {\n\t\treturn &Validated%s{}\n\t}\n", arg, m.Name)
 	fmt.Fprintf(b, "\tout := &Validated%s{}\n", m.Name)
 	for _, f := range m.Fields {
-		switch {
-		case !f.Validate:
-		case f.IsObject:
+		if !f.Validate {
+			continue
+		}
+		if f.IsObject {
 			fmt.Fprintf(b, "\tout.%s = v.%s.Validate(%s.%s.Value)\n", f.GoName, f.GoName, arg, f.GoName)
 			fmt.Fprintf(b, "\tout.%s.Object = v.%s.Validate(%s.%s)\n", f.GoName, objField(f.GoName), arg, f.GoName)
-		default:
-			expr := arg + "." + f.GoName
-			if f.ByPointer {
-				expr = "&" + expr
+			continue
+		}
+		expr := arg + "." + f.GoName
+		if f.ByPointer {
+			expr = "&" + expr
+		}
+		fmt.Fprintf(b, "\tout.%s = v.%s.Validate(%s)\n", f.GoName, f.GoName, expr)
+		if f.ElemValidate {
+			elemArg := "elem"
+			if f.ElemByValue {
+				elemArg = "*elem"
 			}
-			fmt.Fprintf(b, "\tout.%s = v.%s.Validate(%s)\n", f.GoName, f.GoName, expr)
+			fmt.Fprintf(b, "\tfor _, elem := range %s.%s.Value {\n", arg, f.GoName)
+			fmt.Fprintf(b, "\t\tout.%sItems = append(out.%sItems, v.%s.Validate(%s))\n", f.GoName, f.GoName, elemField(f.GoName), elemArg)
+			b.WriteString("\t}\n")
 		}
 	}
 	b.WriteString("\treturn out\n}\n\n")
 
-	// IsValid: object-level plus every field (recursing into child objects).
+	// IsValid: object-level plus every field, recursing into child objects and
+	// array elements.
 	fmt.Fprintf(b, "func (v *Validated%s) IsValid() bool {\n", m.Name)
-	b.WriteString("\treturn v.Object.IsValid()")
+	b.WriteString("\tif !v.Object.IsValid() {\n\t\treturn false\n\t}\n")
 	for _, f := range m.Fields {
-		switch {
-		case !f.Validate:
-		case f.IsObject:
-			fmt.Fprintf(b, " &&\n\t\t(v.%s == nil || v.%s.IsValid())", f.GoName, f.GoName)
-		default:
-			fmt.Fprintf(b, " &&\n\t\tv.%s.IsValid()", f.GoName)
+		if !f.Validate {
+			continue
+		}
+		if f.IsObject {
+			fmt.Fprintf(b, "\tif v.%s != nil && !v.%s.IsValid() {\n\t\treturn false\n\t}\n", f.GoName, f.GoName)
+			continue
+		}
+		fmt.Fprintf(b, "\tif !v.%s.IsValid() {\n\t\treturn false\n\t}\n", f.GoName)
+		if f.ElemValidate {
+			fmt.Fprintf(b, "\tfor i := range v.%sItems {\n\t\tif !v.%sItems[i].IsValid() {\n\t\t\treturn false\n\t\t}\n\t}\n", f.GoName, f.GoName)
 		}
 	}
-	b.WriteString("\n}\n\n")
+	b.WriteString("\treturn true\n}\n\n")
 
 	// Collect: gather every failing field result (each carries its full path) into
 	// out, descending into child objects.
 	fmt.Fprintf(b, "func (v *Validated%s) Collect(out *[]validation.FieldResult) {\n", m.Name)
 	b.WriteString("\tif !v.Object.IsValid() {\n\t\t*out = append(*out, &v.Object)\n\t}\n")
 	for _, f := range m.Fields {
-		switch {
-		case !f.Validate:
-		case f.IsObject:
+		if !f.Validate {
+			continue
+		}
+		if f.IsObject {
 			fmt.Fprintf(b, "\tif v.%s != nil {\n\t\tv.%s.Collect(out)\n\t}\n", f.GoName, f.GoName)
-		default:
-			fmt.Fprintf(b, "\tif !v.%s.IsValid() {\n\t\t*out = append(*out, &v.%s)\n\t}\n", f.GoName, f.GoName)
+			continue
+		}
+		fmt.Fprintf(b, "\tif !v.%s.IsValid() {\n\t\t*out = append(*out, &v.%s)\n\t}\n", f.GoName, f.GoName)
+		if f.ElemValidate {
+			if f.ElemIsObject {
+				fmt.Fprintf(b, "\tfor i := range v.%sItems {\n\t\tv.%sItems[i].Collect(out)\n\t}\n", f.GoName, f.GoName)
+			} else {
+				fmt.Fprintf(b, "\tfor i := range v.%sItems {\n\t\tif !v.%sItems[i].IsValid() {\n\t\t\t*out = append(*out, &v.%sItems[i])\n\t\t}\n\t}\n", f.GoName, f.GoName, f.GoName)
+			}
 		}
 	}
 	b.WriteString("}\n\n")
@@ -271,4 +306,10 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 // e.g. "customerObject" for GoName "Customer".
 func objField(goName string) string {
 	return strings.ToLower(goName[:1]) + goName[1:] + "Object"
+}
+
+// elemField is the unexported per-element validator field name for an array field,
+// e.g. "pastAddressesElem" for GoName "PastAddresses".
+func elemField(goName string) string {
+	return strings.ToLower(goName[:1]) + goName[1:] + "Elem"
 }

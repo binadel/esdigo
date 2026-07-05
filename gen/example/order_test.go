@@ -174,6 +174,35 @@ func TestOrderArrayConstraints(t *testing.T) {
 	}
 }
 
+// TestOrderArrayElementValidation checks per-element recursion into an object
+// array: each element is validated and its failures carry the element field path.
+func TestOrderArrayElementValidation(t *testing.T) {
+	// the second past address is missing its required city
+	in := `{"id":"123e4567-e89b-12d3-a456-426614174000",` +
+		`"customer":{"name":"Ada"},"shippingAddress":{"city":"Paris"},` +
+		`"pastAddresses":[{"city":"Rome"},{"street":"x"}]}`
+	var o Order
+	if err := o.UnmarshalJSON([]byte(in)); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	r := NewOrderValidator().Validate(&o)
+	if r.IsValid() {
+		t.Errorf("a past address missing city should make the order invalid")
+	}
+	if len(r.PastAddressesItems) != 2 {
+		t.Fatalf("expected 2 element results, got %d", len(r.PastAddressesItems))
+	}
+	if !r.PastAddressesItems[0].IsValid() {
+		t.Errorf("first address (Rome) should be valid")
+	}
+	if r.PastAddressesItems[1].IsValid() {
+		t.Errorf("second address (no city) should be invalid")
+	}
+	if report := failuresJSON(r.Failures()); !strings.Contains(report, `["pastAddresses","city"]`) {
+		t.Errorf("failure should carry the element field path: %s", report)
+	}
+}
+
 // failuresJSON serializes a flat failure list as a JSON array for assertions.
 func failuresJSON(failures []validation.FieldResult) string {
 	w := json.NewWriter(128)

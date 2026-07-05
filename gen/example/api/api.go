@@ -132,9 +132,16 @@ func (v *AddressValidator) Validate(a *Address) *ValidatedAddress {
 }
 
 func (v *ValidatedAddress) IsValid() bool {
-	return v.Object.IsValid() &&
-		v.City.IsValid() &&
-		v.Zip.IsValid()
+	if !v.Object.IsValid() {
+		return false
+	}
+	if !v.City.IsValid() {
+		return false
+	}
+	if !v.Zip.IsValid() {
+		return false
+	}
+	return true
 }
 
 func (v *ValidatedAddress) Collect(out *[]validation.FieldResult) {
@@ -276,11 +283,12 @@ func (u *User) ReadJSON(r *json.Reader) bool {
 }
 
 type ValidatedUser struct {
-	Object  validation.Result[*User]
-	Address *ValidatedAddress
-	Email   validation.Result[*mail.Address]
-	Id      validation.Result[int64]
-	Roles   validation.Result[[]*types.String]
+	Object     validation.Result[*User]
+	Address    *ValidatedAddress
+	Email      validation.Result[*mail.Address]
+	Id         validation.Result[int64]
+	Roles      validation.Result[[]*types.String]
+	RolesItems []validation.Result[string]
 }
 
 type UserValidator struct {
@@ -289,6 +297,7 @@ type UserValidator struct {
 	Email         *validation.Email
 	Id            *validation.Number[int64]
 	Roles         *validation.Array[types.String, *types.String]
+	rolesElem     *validation.String
 }
 
 func NewUserValidator(base ...string) *UserValidator {
@@ -298,6 +307,7 @@ func NewUserValidator(base ...string) *UserValidator {
 		Email:         validation.NewString(validation.SubPath(base, "email")...).Required().NotNull().Email(),
 		Id:            validation.NewNumber[int64](validation.SubPath(base, "id")...).Required().NotNull().Min(1),
 		Roles:         validation.NewArray[types.String, *types.String](validation.SubPath(base, "roles")...).NotNull().UniqueItems(),
+		rolesElem:     validation.NewString(validation.SubPath(base, "roles")...).NotNull().MinLength(2),
 	}
 }
 
@@ -311,15 +321,34 @@ func (v *UserValidator) Validate(u *User) *ValidatedUser {
 	out.Email = v.Email.Validate(u.Email)
 	out.Id = v.Id.Validate(&u.Id)
 	out.Roles = v.Roles.Validate(u.Roles)
+	for _, elem := range u.Roles.Value {
+		out.RolesItems = append(out.RolesItems, v.rolesElem.Validate(*elem))
+	}
 	return out
 }
 
 func (v *ValidatedUser) IsValid() bool {
-	return v.Object.IsValid() &&
-		(v.Address == nil || v.Address.IsValid()) &&
-		v.Email.IsValid() &&
-		v.Id.IsValid() &&
-		v.Roles.IsValid()
+	if !v.Object.IsValid() {
+		return false
+	}
+	if v.Address != nil && !v.Address.IsValid() {
+		return false
+	}
+	if !v.Email.IsValid() {
+		return false
+	}
+	if !v.Id.IsValid() {
+		return false
+	}
+	if !v.Roles.IsValid() {
+		return false
+	}
+	for i := range v.RolesItems {
+		if !v.RolesItems[i].IsValid() {
+			return false
+		}
+	}
+	return true
 }
 
 func (v *ValidatedUser) Collect(out *[]validation.FieldResult) {
@@ -337,6 +366,11 @@ func (v *ValidatedUser) Collect(out *[]validation.FieldResult) {
 	}
 	if !v.Roles.IsValid() {
 		*out = append(*out, &v.Roles)
+	}
+	for i := range v.RolesItems {
+		if !v.RolesItems[i].IsValid() {
+			*out = append(*out, &v.RolesItems[i])
+		}
 	}
 }
 

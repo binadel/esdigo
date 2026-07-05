@@ -62,6 +62,25 @@ func TestUserValidation(t *testing.T) {
 	}
 }
 
+// TestUserRoleElementValidation checks per-element validation of a scalar array:
+// each role must meet the item's minLength.
+func TestUserRoleElementValidation(t *testing.T) {
+	var u User
+	if err := u.UnmarshalJSON([]byte(`{"id":7,"email":"a@b.com","address":{"city":"Paris"},"roles":["ok","x"]}`)); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	r := NewUserValidator().Validate(&u)
+	if r.IsValid() {
+		t.Errorf("a too-short role should make the user invalid")
+	}
+	if len(r.RolesItems) != 2 || !r.RolesItems[0].IsValid() || r.RolesItems[1].IsValid() {
+		t.Errorf("role element validity wrong: %+v", r.RolesItems)
+	}
+	if report := failuresJSON(r.Failures()); !strings.Contains(report, "MIN_LENGTH") {
+		t.Errorf("short role should fail MIN_LENGTH: %s", report)
+	}
+}
+
 func failuresJSON(failures []validation.FieldResult) string {
 	w := json.NewWriter(128)
 	w.BeginArray()

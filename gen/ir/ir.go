@@ -49,6 +49,16 @@ type Field struct {
 	ChildType     string // the child message name, e.g. "OrderCustomer"
 	ChildNewExpr  string // the child validator constructor, e.g. NewOrderCustomerValidator(...)
 	ObjectNewExpr string // the object-level (presence/null/type) validator constructor
+
+	// Per-element validation for array fields: each element is validated by a
+	// reused element validator, and the results collect into a <Field>Items slice.
+	ElemValidate      bool
+	ElemIsObject      bool   // object element (recurse) vs scalar element
+	ElemChild         string // object element: the child message name
+	ElemValidatorType string // per-element validator type
+	ElemNewExpr       string // per-element validator constructor
+	ElemItemsType     string // the <Field>Items slice element type
+	ElemByValue       bool   // scalar element: Validate takes the dereferenced *elem
 }
 
 // formatInfo maps a JSON Schema string "format" to the format-specific validator:
@@ -207,7 +217,7 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 	if s.Items == nil {
 		return nil, fmt.Errorf("array property %q has no items schema", jsonName)
 	}
-	elem, err := b.arrayElem(msgName, jsonName, s.Items)
+	elem, elemIsObject, elemSchema, err := b.arrayElem(msgName, jsonName, s.Items)
 	if err != nil {
 		return nil, err
 	}
@@ -225,45 +235,66 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 		f.ResultType = fmt.Sprintf("[]*%s", elem)
 		f.NewExpr = arrayExpr(elem, jsonName, required, notNull, s)
 	}
+
+	// Per-element validation: recurse into an object element, or validate a scalar
+	// element that carries value constraints. The element validator lives at the
+	// array field's path (element index is structural, via <Field>Items).
+	if elemIsObject {
+		f.ElemValidate = true
+		f.ElemIsObject = true
+		f.ElemChild = elem
+		f.ElemValidatorType = "*" + elem + "Validator"
+		f.ElemNewExpr = fmt.Sprintf("New%sValidator(%s)", elem, subPath(jsonName))
+		f.ElemItemsType = "*Validated" + elem
+	} else if hasValueConstraint(elemSchema) {
+		ef := buildScalarField(jsonName, elemSchema, false)
+		f.ElemValidate = true
+		f.ElemValidatorType = ef.ValidatorType
+		f.ElemNewExpr = ef.NewExpr
+		f.ElemItemsType = "validation.Result[" + ef.ResultType + "]"
+		f.ElemByValue = true
+		f.Imports = append(f.Imports, ef.Imports...)
+	}
 	return f, nil
 }
 
-// arrayElem returns the Go element type for an array's items schema: a scalar
-// wrapper, or a generated child message for an object / $ref-to-object element.
-func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema) (string, error) {
+// arrayElem returns the Go element type for an array's items schema (a scalar
+// wrapper or a generated child message), whether it is an object, and the
+// resolved items schema (used to build the per-element validator).
+func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema) (elem string, isObject bool, resolved *schema.Schema, err error) {
 	if items.Ref != "" {
 		key := refName(items.Ref)
 		target, ok := b.defs[key]
 		if !ok {
-			return "", fmt.Errorf("unresolved $ref %q in items of %q", items.Ref, jsonName)
+			return "", false, nil, fmt.Errorf("unresolved $ref %q in items of %q", items.Ref, jsonName)
 		}
 		if target.Type.Primary() == "object" {
 			child := goName(key)
 			if err := b.buildMessage(child, target); err != nil {
-				return "", err
+				return "", false, nil, err
 			}
-			return child, nil
+			return child, true, target, nil
 		}
 		return b.arrayElem(msgName, jsonName, target)
 	}
 
 	switch kind := items.Type.Primary(); kind {
 	case "string":
-		return "types.String", nil
+		return "types.String", false, items, nil
 	case "integer":
-		return "types.Int64", nil
+		return "types.Int64", false, items, nil
 	case "number":
-		return "types.Float64", nil
+		return "types.Float64", false, items, nil
 	case "boolean":
-		return "types.Boolean", nil
+		return "types.Boolean", false, items, nil
 	case "object":
 		child := msgName + goName(jsonName) + "Item"
 		if err := b.buildMessage(child, items); err != nil {
-			return "", err
+			return "", false, nil, err
 		}
-		return child, nil
+		return child, true, items, nil
 	default:
-		return "", fmt.Errorf("unsupported array element type %q in %q", kind, jsonName)
+		return "", false, nil, fmt.Errorf("unsupported array element type %q in %q", kind, jsonName)
 	}
 }
 
