@@ -207,7 +207,8 @@ func numberBase[V any](path FieldPath, required, notNull bool, field numberField
 		result.Errors = append(result.Errors, errors.Required)
 		return result, value, true
 	}
-	if notNull && !field.IsDefined() {
+	if notNull && field.IsPresent() && !field.IsDefined() {
+		// present-but-null violates not-null; an absent field is Required's concern.
 		result.Errors = append(result.Errors, errors.NotNull)
 		return result, value, true
 	}

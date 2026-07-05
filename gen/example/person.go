@@ -198,6 +198,7 @@ func (p *Person) ReadJSON(r *json.Reader) bool {
 }
 
 type ValidatedPerson struct {
+	Object    validation.Result[*Person]
 	Active    validation.Result[bool]
 	Age       validation.Result[int64]
 	Email     validation.Result[*mail.Address]
@@ -221,30 +222,85 @@ type PersonValidator struct {
 	Score     *validation.Number[float64]
 }
 
-func NewPersonValidator() *PersonValidator {
+func NewPersonValidator(base ...string) *PersonValidator {
 	return &PersonValidator{
-		Active:    validation.NewBoolean("active").NotNull(),
-		Age:       validation.NewNumber[int64]("age").Required().NotNull().Min(0).Max(150),
-		Email:     validation.NewString("email").NotNull().MaxLength(254).Email(),
-		FirstName: validation.NewString("firstName").Required().NotNull().MinLength(1).MaxLength(100),
-		Homepage:  validation.NewString("homepage").Uri(),
-		Id:        validation.NewString("id").NotNull().Uuid(),
-		LastName:  validation.NewString("lastName").MaxLength(100),
-		Role:      validation.NewString("role").NotNull().Enum("admin", "user", "guest"),
-		Score:     validation.NewNumber[float64]("score").NotNull().Min(0).MultipleOf(0.5),
+		Active:    validation.NewBoolean(validation.SubPath(base, "active")...).NotNull(),
+		Age:       validation.NewNumber[int64](validation.SubPath(base, "age")...).Required().NotNull().Min(0).Max(150),
+		Email:     validation.NewString(validation.SubPath(base, "email")...).NotNull().MaxLength(254).Email(),
+		FirstName: validation.NewString(validation.SubPath(base, "firstName")...).Required().NotNull().MinLength(1).MaxLength(100),
+		Homepage:  validation.NewString(validation.SubPath(base, "homepage")...).Uri(),
+		Id:        validation.NewString(validation.SubPath(base, "id")...).NotNull().Uuid(),
+		LastName:  validation.NewString(validation.SubPath(base, "lastName")...).MaxLength(100),
+		Role:      validation.NewString(validation.SubPath(base, "role")...).NotNull().Enum("admin", "user", "guest"),
+		Score:     validation.NewNumber[float64](validation.SubPath(base, "score")...).NotNull().Min(0).MultipleOf(0.5),
 	}
 }
 
 func (v *PersonValidator) Validate(p *Person) *ValidatedPerson {
-	return &ValidatedPerson{
-		Active:    v.Active.Validate(p.Active),
-		Age:       v.Age.Validate(&p.Age),
-		Email:     v.Email.Validate(p.Email),
-		FirstName: v.FirstName.Validate(p.FirstName),
-		Homepage:  v.Homepage.Validate(p.Homepage),
-		Id:        v.Id.Validate(p.Id),
-		LastName:  v.LastName.Validate(p.LastName),
-		Role:      v.Role.Validate(p.Role),
-		Score:     v.Score.Validate(&p.Score),
+	if p == nil {
+		return &ValidatedPerson{}
 	}
+	out := &ValidatedPerson{}
+	out.Active = v.Active.Validate(p.Active)
+	out.Age = v.Age.Validate(&p.Age)
+	out.Email = v.Email.Validate(p.Email)
+	out.FirstName = v.FirstName.Validate(p.FirstName)
+	out.Homepage = v.Homepage.Validate(p.Homepage)
+	out.Id = v.Id.Validate(p.Id)
+	out.LastName = v.LastName.Validate(p.LastName)
+	out.Role = v.Role.Validate(p.Role)
+	out.Score = v.Score.Validate(&p.Score)
+	return out
+}
+
+func (v *ValidatedPerson) IsValid() bool {
+	return v.Object.IsValid() &&
+		v.Active.IsValid() &&
+		v.Age.IsValid() &&
+		v.Email.IsValid() &&
+		v.FirstName.IsValid() &&
+		v.Homepage.IsValid() &&
+		v.Id.IsValid() &&
+		v.LastName.IsValid() &&
+		v.Role.IsValid() &&
+		v.Score.IsValid()
+}
+
+func (v *ValidatedPerson) Collect(out *[]validation.FieldResult) {
+	if !v.Object.IsValid() {
+		*out = append(*out, &v.Object)
+	}
+	if !v.Active.IsValid() {
+		*out = append(*out, &v.Active)
+	}
+	if !v.Age.IsValid() {
+		*out = append(*out, &v.Age)
+	}
+	if !v.Email.IsValid() {
+		*out = append(*out, &v.Email)
+	}
+	if !v.FirstName.IsValid() {
+		*out = append(*out, &v.FirstName)
+	}
+	if !v.Homepage.IsValid() {
+		*out = append(*out, &v.Homepage)
+	}
+	if !v.Id.IsValid() {
+		*out = append(*out, &v.Id)
+	}
+	if !v.LastName.IsValid() {
+		*out = append(*out, &v.LastName)
+	}
+	if !v.Role.IsValid() {
+		*out = append(*out, &v.Role)
+	}
+	if !v.Score.IsValid() {
+		*out = append(*out, &v.Score)
+	}
+}
+
+func (v *ValidatedPerson) Failures() []validation.FieldResult {
+	var out []validation.FieldResult
+	v.Collect(&out)
+	return out
 }

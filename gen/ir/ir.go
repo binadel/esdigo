@@ -35,13 +35,20 @@ type Field struct {
 	Doc       string
 	ModelType string // the types.* wrapper, e.g. "types.String"
 
-	// Validation. Validate is false for a field with no constraints at all.
+	// Validation. Validate is false for a scalar field with no constraints at all;
+	// object fields always validate (they recurse into the child validator).
 	Validate      bool
 	ByPointer     bool     // number-family validators take &field, others take it by value
-	ValidatorType string   // e.g. "*validation.String"
-	ResultType    string   // the Result[T] payload type, e.g. "string"
-	NewExpr       string   // the fluent constructor, e.g. validation.NewString("x").Required()
+	ValidatorType string   // scalar: e.g. "*validation.String"
+	ResultType    string   // scalar: the Result[T] payload type, e.g. "string"
+	NewExpr       string   // scalar: the fluent constructor
 	Imports       []string // extra imports this field's result type needs
+
+	// Object fields (types.Object[Child,*Child]) recurse into the child validator.
+	IsObject      bool
+	ChildType     string // the child message name, e.g. "OrderCustomer"
+	ChildNewExpr  string // the child validator constructor, e.g. NewOrderCustomerValidator(...)
+	ObjectNewExpr string // the object-level (presence/null/type) validator constructor
 }
 
 // formatInfo maps a JSON Schema string "format" to the format-specific validator:
@@ -75,16 +82,6 @@ var formats = map[string]formatInfo{
 func formatKnown(name string) bool {
 	_, ok := formats[name]
 	return ok
-}
-
-// HasValidation reports whether any field of the message is validated.
-func (m *Message) HasValidation() bool {
-	for _, f := range m.Fields {
-		if f.Validate {
-			return true
-		}
-	}
-	return false
 }
 
 // builder accumulates the messages (root, inline nested objects and $defs) of one
@@ -123,16 +120,9 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 
 	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
 
-	needValidation := false
-	for _, m := range b.messages {
-		if m.HasValidation() {
-			needValidation = true
-		}
-	}
-
 	return &File{
 		Package:  pkg,
-		Imports:  buildImports(needValidation, b.imports),
+		Imports:  buildImports(b.imports),
 		Messages: b.messages,
 	}, nil
 }
@@ -200,25 +190,32 @@ func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, requ
 	return b.buildField(msgName, jsonName, target, required)
 }
 
-// objectField builds a types.Object[Child,*Child] field and its object-level
-// validator (presence/null/type). Recursive validation of the child's own fields
-// is not yet composed here.
+// objectField builds a types.Object[Child,*Child] field. It always validates: the
+// object-level validator checks presence/null/type, and the generated Validate
+// recurses into the child validator to check the child's own fields.
 func objectField(jsonName, child string, required, notNull bool) *Field {
 	f := &Field{
 		GoName:    goName(jsonName),
 		JSONName:  jsonName,
 		ModelType: fmt.Sprintf("types.Object[%s, *%s]", child, child),
+		IsObject:  true,
+		ChildType: child,
+		Validate:  true,
 	}
-	f.Validate = required || notNull
-	if f.Validate {
-		f.ValidatorType = fmt.Sprintf("*validation.Object[%s, *%s]", child, child)
-		f.ResultType = "*" + child
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "validation.NewObject[%s, *%s](%q)", child, child, jsonName)
-		writePresence(&sb, required, notNull)
-		f.NewExpr = sb.String()
-	}
+
+	var obj strings.Builder
+	fmt.Fprintf(&obj, "validation.NewObject[%s, *%s](%s)", child, child, subPath(jsonName))
+	writePresence(&obj, required, notNull)
+	f.ObjectNewExpr = obj.String()
+
+	f.ChildNewExpr = fmt.Sprintf("New%sValidator(%s)", child, subPath(jsonName))
 	return f
+}
+
+// subPath renders the path argument for a field validator: the base slice threaded
+// from the parent, with this field's JSON name appended.
+func subPath(jsonName string) string {
+	return fmt.Sprintf("validation.SubPath(base, %q)...", jsonName)
 }
 
 func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
@@ -280,7 +277,7 @@ func hasValueConstraint(s *schema.Schema) bool {
 
 func stringExpr(jsonName string, required, notNull bool, s *schema.Schema) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "validation.NewString(%q)", jsonName)
+	fmt.Fprintf(&b, "validation.NewString(%s)", subPath(jsonName))
 	writePresence(&b, required, notNull)
 	if s.MinLength != nil {
 		fmt.Fprintf(&b, ".MinLength(%d)", *s.MinLength)
@@ -302,7 +299,7 @@ func stringExpr(jsonName string, required, notNull bool, s *schema.Schema) strin
 
 func numberExpr(goType, jsonName string, required, notNull bool, s *schema.Schema) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "validation.NewNumber[%s](%q)", goType, jsonName)
+	fmt.Fprintf(&b, "validation.NewNumber[%s](%s)", goType, subPath(jsonName))
 	writePresence(&b, required, notNull)
 	if s.Minimum != nil {
 		fmt.Fprintf(&b, ".Min(%s)", raw(s.Minimum))
@@ -330,7 +327,7 @@ func numberExpr(goType, jsonName string, required, notNull bool, s *schema.Schem
 
 func booleanExpr(jsonName string, required, notNull bool, s *schema.Schema) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "validation.NewBoolean(%q)", jsonName)
+	fmt.Fprintf(&b, "validation.NewBoolean(%s)", subPath(jsonName))
 	writePresence(&b, required, notNull)
 	if s.Const != nil {
 		fmt.Fprintf(&b, ".Const(%s)", raw(s.Const))
@@ -368,13 +365,13 @@ func doc(s *schema.Schema) string {
 	return s.Description
 }
 
-func buildImports(needValidation bool, extra map[string]bool) []string {
+func buildImports(extra map[string]bool) []string {
+	// Every generated message carries a validator (with an object-level Result), so
+	// validation is always imported alongside json and types.
 	set := map[string]bool{
 		"github.com/binadel/esdigo/json":       true,
 		"github.com/binadel/esdigo/json/types": true,
-	}
-	if needValidation {
-		set["github.com/binadel/esdigo/validation"] = true
+		"github.com/binadel/esdigo/validation": true,
 	}
 	for imp := range extra {
 		set[imp] = true

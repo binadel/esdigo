@@ -65,7 +65,7 @@ func (a *Array[V, PV]) validateRaw(value types.Array[V, PV]) []Error {
 		return errorList
 	}
 
-	if a.notNull && !value.Defined {
+	if a.notNull && value.Present && !value.Defined {
 		errorList = append(errorList, errors.NotNull)
 		return errorList
 	}

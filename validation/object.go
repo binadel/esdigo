@@ -36,7 +36,7 @@ func (o *Object[V, PV]) validateRaw(value types.Object[V, PV]) []Error {
 		return errorList
 	}
 
-	if o.notNull && !value.Defined {
+	if o.notNull && value.Present && !value.Defined {
 		errorList = append(errorList, errors.NotNull)
 		return errorList
 	}

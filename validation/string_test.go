@@ -24,6 +24,12 @@ func TestStringPresenceAndNull(t *testing.T) {
 		mustContain(t, "notNull", resultJSON(r), "NOT_NULL")
 	}
 
+	// notNull without required: an ABSENT field is fine (only present-null fails).
+	var absentNN types.String
+	if r := NewString("s").NotNull().Validate(absentNN); !r.IsValid() {
+		t.Errorf("notNull absent (not required) should be valid: %v", r.Errors)
+	}
+
 	// wrong type (number into string) -> STRING
 	wrong := readInto[types.String]("42")
 	if r := NewString("s").Validate(wrong); r.IsValid() {

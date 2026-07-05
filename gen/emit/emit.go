@@ -77,9 +77,7 @@ func emitMessage(b *bytes.Buffer, m *ir.Message) {
 	emitMarshal(b, m, recv)
 	emitWriteJSON(b, m, recv)
 	emitReadJSON(b, m, recv)
-	if m.HasValidation() {
-		emitValidator(b, m, recv)
-	}
+	emitValidator(b, m, recv)
 }
 
 func emitStruct(b *bytes.Buffer, m *ir.Message) {
@@ -161,47 +159,116 @@ func emitReadJSON(b *bytes.Buffer, m *ir.Message, recv string) {
 	b.WriteString("\treturn false\n}\n\n")
 }
 
+// emitValidator emits the validation trio plus IsValid/Collect/Errors. Object
+// fields recurse: the validated result nests *Validated<Child>, the validator
+// holds the child validator and an object-level checker, and validation descends
+// into the child. Every Validated struct carries an object-level Object result and
+// its field validators take a base path so nested errors get full paths.
 func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
-	// Validated<Message>: the per-field results.
+	arg := recv
+	if arg == "v" { // avoid clashing with the validator receiver in Validate
+		arg = "src"
+	}
+
+	// Validated<Message>
 	fmt.Fprintf(b, "type Validated%s struct {\n", m.Name)
+	fmt.Fprintf(b, "\tObject validation.Result[*%s]\n", m.Name)
 	for _, f := range m.Fields {
-		if f.Validate {
+		switch {
+		case !f.Validate:
+		case f.IsObject:
+			fmt.Fprintf(b, "\t%s *Validated%s\n", f.GoName, f.ChildType)
+		default:
 			fmt.Fprintf(b, "\t%s validation.Result[%s]\n", f.GoName, f.ResultType)
 		}
 	}
 	b.WriteString("}\n\n")
 
-	// <Message>Validator: the configured field validators.
+	// <Message>Validator
 	fmt.Fprintf(b, "type %sValidator struct {\n", m.Name)
 	for _, f := range m.Fields {
-		if f.Validate {
+		switch {
+		case !f.Validate:
+		case f.IsObject:
+			fmt.Fprintf(b, "\t%s *%sValidator\n", f.GoName, f.ChildType)
+			fmt.Fprintf(b, "\t%s *validation.Object[%s, *%s]\n", objField(f.GoName), f.ChildType, f.ChildType)
+		default:
 			fmt.Fprintf(b, "\t%s %s\n", f.GoName, f.ValidatorType)
 		}
 	}
 	b.WriteString("}\n\n")
 
-	// New<Message>Validator: build the validators from the schema constraints.
-	fmt.Fprintf(b, "func New%sValidator() *%sValidator {\n", m.Name, m.Name)
+	// New<Message>Validator(base ...string)
+	fmt.Fprintf(b, "func New%sValidator(base ...string) *%sValidator {\n", m.Name, m.Name)
 	fmt.Fprintf(b, "\treturn &%sValidator{\n", m.Name)
 	for _, f := range m.Fields {
-		if f.Validate {
+		switch {
+		case !f.Validate:
+		case f.IsObject:
+			fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.ChildNewExpr)
+			fmt.Fprintf(b, "\t\t%s: %s,\n", objField(f.GoName), f.ObjectNewExpr)
+		default:
 			fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.NewExpr)
 		}
 	}
 	b.WriteString("\t}\n}\n\n")
 
-	// Validate: run every field validator into a Validated<Message>.
-	fmt.Fprintf(b, "func (v *%sValidator) Validate(%s *%s) *Validated%s {\n", m.Name, recv, m.Name, m.Name)
-	fmt.Fprintf(b, "\treturn &Validated%s{\n", m.Name)
+	// Validate(x *X) *ValidatedX
+	fmt.Fprintf(b, "func (v *%sValidator) Validate(%s *%s) *Validated%s {\n", m.Name, arg, m.Name, m.Name)
+	fmt.Fprintf(b, "\tif %s == nil {\n\t\treturn &Validated%s{}\n\t}\n", arg, m.Name)
+	fmt.Fprintf(b, "\tout := &Validated%s{}\n", m.Name)
 	for _, f := range m.Fields {
-		if !f.Validate {
-			continue
+		switch {
+		case !f.Validate:
+		case f.IsObject:
+			fmt.Fprintf(b, "\tout.%s = v.%s.Validate(%s.%s.Value)\n", f.GoName, f.GoName, arg, f.GoName)
+			fmt.Fprintf(b, "\tout.%s.Object = v.%s.Validate(%s.%s)\n", f.GoName, objField(f.GoName), arg, f.GoName)
+		default:
+			expr := arg + "." + f.GoName
+			if f.ByPointer {
+				expr = "&" + expr
+			}
+			fmt.Fprintf(b, "\tout.%s = v.%s.Validate(%s)\n", f.GoName, f.GoName, expr)
 		}
-		arg := recv + "." + f.GoName
-		if f.ByPointer {
-			arg = "&" + arg
-		}
-		fmt.Fprintf(b, "\t\t%s: v.%s.Validate(%s),\n", f.GoName, f.GoName, arg)
 	}
-	b.WriteString("\t}\n}\n\n")
+	b.WriteString("\treturn out\n}\n\n")
+
+	// IsValid: object-level plus every field (recursing into child objects).
+	fmt.Fprintf(b, "func (v *Validated%s) IsValid() bool {\n", m.Name)
+	b.WriteString("\treturn v.Object.IsValid()")
+	for _, f := range m.Fields {
+		switch {
+		case !f.Validate:
+		case f.IsObject:
+			fmt.Fprintf(b, " &&\n\t\t(v.%s == nil || v.%s.IsValid())", f.GoName, f.GoName)
+		default:
+			fmt.Fprintf(b, " &&\n\t\tv.%s.IsValid()", f.GoName)
+		}
+	}
+	b.WriteString("\n}\n\n")
+
+	// Collect: gather every failing field result (each carries its full path) into
+	// out, descending into child objects.
+	fmt.Fprintf(b, "func (v *Validated%s) Collect(out *[]validation.FieldResult) {\n", m.Name)
+	b.WriteString("\tif !v.Object.IsValid() {\n\t\t*out = append(*out, &v.Object)\n\t}\n")
+	for _, f := range m.Fields {
+		switch {
+		case !f.Validate:
+		case f.IsObject:
+			fmt.Fprintf(b, "\tif v.%s != nil {\n\t\tv.%s.Collect(out)\n\t}\n", f.GoName, f.GoName)
+		default:
+			fmt.Fprintf(b, "\tif !v.%s.IsValid() {\n\t\t*out = append(*out, &v.%s)\n\t}\n", f.GoName, f.GoName)
+		}
+	}
+	b.WriteString("}\n\n")
+
+	// Failures: the flat list of failing field results (path + codes) across the tree.
+	fmt.Fprintf(b, "func (v *Validated%s) Failures() []validation.FieldResult {\n", m.Name)
+	b.WriteString("\tvar out []validation.FieldResult\n\tv.Collect(&out)\n\treturn out\n}\n\n")
+}
+
+// objField is the unexported object-level checker field name for an object field,
+// e.g. "customerObject" for GoName "Customer".
+func objField(goName string) string {
+	return strings.ToLower(goName[:1]) + goName[1:] + "Object"
 }

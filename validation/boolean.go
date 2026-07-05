@@ -51,7 +51,7 @@ func (b *Boolean) Validate(value types.Boolean) Result[bool] {
 		result.Errors = append(result.Errors, errors.Required)
 		return result
 	}
-	if b.notNull && !value.Defined {
+	if b.notNull && value.Present && !value.Defined {
 		result.Errors = append(result.Errors, errors.NotNull)
 		return result
 	}

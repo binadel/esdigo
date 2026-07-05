@@ -28,6 +28,12 @@ func TestNumberPresenceAndNull(t *testing.T) {
 	} else {
 		mustContain(t, "notNull", resultJSON(r), "NOT_NULL")
 	}
+
+	// notNull without required: an ABSENT field is fine (only present-null fails).
+	var absent2 types.Int64
+	if r := NewNumber[int64]("age").NotNull().Validate(&absent2); !r.IsValid() {
+		t.Errorf("notNull absent (not required) should be valid: %v", r.Errors)
+	}
 }
 
 func TestNumberReasons(t *testing.T) {

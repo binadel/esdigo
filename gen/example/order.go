@@ -106,6 +106,7 @@ func (a *Address) ReadJSON(r *json.Reader) bool {
 }
 
 type ValidatedAddress struct {
+	Object validation.Result[*Address]
 	City   validation.Result[string]
 	Street validation.Result[string]
 }
@@ -115,18 +116,45 @@ type AddressValidator struct {
 	Street *validation.String
 }
 
-func NewAddressValidator() *AddressValidator {
+func NewAddressValidator(base ...string) *AddressValidator {
 	return &AddressValidator{
-		City:   validation.NewString("city").Required().NotNull().MinLength(1),
-		Street: validation.NewString("street").NotNull().MaxLength(200),
+		City:   validation.NewString(validation.SubPath(base, "city")...).Required().NotNull().MinLength(1),
+		Street: validation.NewString(validation.SubPath(base, "street")...).NotNull().MaxLength(200),
 	}
 }
 
 func (v *AddressValidator) Validate(a *Address) *ValidatedAddress {
-	return &ValidatedAddress{
-		City:   v.City.Validate(a.City),
-		Street: v.Street.Validate(a.Street),
+	if a == nil {
+		return &ValidatedAddress{}
 	}
+	out := &ValidatedAddress{}
+	out.City = v.City.Validate(a.City)
+	out.Street = v.Street.Validate(a.Street)
+	return out
+}
+
+func (v *ValidatedAddress) IsValid() bool {
+	return v.Object.IsValid() &&
+		v.City.IsValid() &&
+		v.Street.IsValid()
+}
+
+func (v *ValidatedAddress) Collect(out *[]validation.FieldResult) {
+	if !v.Object.IsValid() {
+		*out = append(*out, &v.Object)
+	}
+	if !v.City.IsValid() {
+		*out = append(*out, &v.City)
+	}
+	if !v.Street.IsValid() {
+		*out = append(*out, &v.Street)
+	}
+}
+
+func (v *ValidatedAddress) Failures() []validation.FieldResult {
+	var out []validation.FieldResult
+	v.Collect(&out)
+	return out
 }
 
 // Order is a customer order.
@@ -250,31 +278,80 @@ func (o *Order) ReadJSON(r *json.Reader) bool {
 }
 
 type ValidatedOrder struct {
-	Customer        validation.Result[*OrderCustomer]
+	Object          validation.Result[*Order]
+	BillingAddress  *ValidatedAddress
+	Customer        *ValidatedOrderCustomer
 	Id              validation.Result[uuid.UUID]
-	ShippingAddress validation.Result[*Address]
+	ShippingAddress *ValidatedAddress
 }
 
 type OrderValidator struct {
-	Customer        *validation.Object[OrderCustomer, *OrderCustomer]
-	Id              *validation.Uuid
-	ShippingAddress *validation.Object[Address, *Address]
+	BillingAddress        *AddressValidator
+	billingAddressObject  *validation.Object[Address, *Address]
+	Customer              *OrderCustomerValidator
+	customerObject        *validation.Object[OrderCustomer, *OrderCustomer]
+	Id                    *validation.Uuid
+	ShippingAddress       *AddressValidator
+	shippingAddressObject *validation.Object[Address, *Address]
 }
 
-func NewOrderValidator() *OrderValidator {
+func NewOrderValidator(base ...string) *OrderValidator {
 	return &OrderValidator{
-		Customer:        validation.NewObject[OrderCustomer, *OrderCustomer]("customer").Required().NotNull(),
-		Id:              validation.NewString("id").Required().NotNull().Uuid(),
-		ShippingAddress: validation.NewObject[Address, *Address]("shippingAddress").NotNull(),
+		BillingAddress:        NewAddressValidator(validation.SubPath(base, "billingAddress")...),
+		billingAddressObject:  validation.NewObject[Address, *Address](validation.SubPath(base, "billingAddress")...),
+		Customer:              NewOrderCustomerValidator(validation.SubPath(base, "customer")...),
+		customerObject:        validation.NewObject[OrderCustomer, *OrderCustomer](validation.SubPath(base, "customer")...).Required().NotNull(),
+		Id:                    validation.NewString(validation.SubPath(base, "id")...).Required().NotNull().Uuid(),
+		ShippingAddress:       NewAddressValidator(validation.SubPath(base, "shippingAddress")...),
+		shippingAddressObject: validation.NewObject[Address, *Address](validation.SubPath(base, "shippingAddress")...).NotNull(),
 	}
 }
 
 func (v *OrderValidator) Validate(o *Order) *ValidatedOrder {
-	return &ValidatedOrder{
-		Customer:        v.Customer.Validate(o.Customer),
-		Id:              v.Id.Validate(o.Id),
-		ShippingAddress: v.ShippingAddress.Validate(o.ShippingAddress),
+	if o == nil {
+		return &ValidatedOrder{}
 	}
+	out := &ValidatedOrder{}
+	out.BillingAddress = v.BillingAddress.Validate(o.BillingAddress.Value)
+	out.BillingAddress.Object = v.billingAddressObject.Validate(o.BillingAddress)
+	out.Customer = v.Customer.Validate(o.Customer.Value)
+	out.Customer.Object = v.customerObject.Validate(o.Customer)
+	out.Id = v.Id.Validate(o.Id)
+	out.ShippingAddress = v.ShippingAddress.Validate(o.ShippingAddress.Value)
+	out.ShippingAddress.Object = v.shippingAddressObject.Validate(o.ShippingAddress)
+	return out
+}
+
+func (v *ValidatedOrder) IsValid() bool {
+	return v.Object.IsValid() &&
+		(v.BillingAddress == nil || v.BillingAddress.IsValid()) &&
+		(v.Customer == nil || v.Customer.IsValid()) &&
+		v.Id.IsValid() &&
+		(v.ShippingAddress == nil || v.ShippingAddress.IsValid())
+}
+
+func (v *ValidatedOrder) Collect(out *[]validation.FieldResult) {
+	if !v.Object.IsValid() {
+		*out = append(*out, &v.Object)
+	}
+	if v.BillingAddress != nil {
+		v.BillingAddress.Collect(out)
+	}
+	if v.Customer != nil {
+		v.Customer.Collect(out)
+	}
+	if !v.Id.IsValid() {
+		*out = append(*out, &v.Id)
+	}
+	if v.ShippingAddress != nil {
+		v.ShippingAddress.Collect(out)
+	}
+}
+
+func (v *ValidatedOrder) Failures() []validation.FieldResult {
+	var out []validation.FieldResult
+	v.Collect(&out)
+	return out
 }
 
 type OrderCustomer struct {
@@ -371,8 +448,9 @@ func (o *OrderCustomer) ReadJSON(r *json.Reader) bool {
 }
 
 type ValidatedOrderCustomer struct {
-	Email validation.Result[*mail.Address]
-	Name  validation.Result[string]
+	Object validation.Result[*OrderCustomer]
+	Email  validation.Result[*mail.Address]
+	Name   validation.Result[string]
 }
 
 type OrderCustomerValidator struct {
@@ -380,16 +458,43 @@ type OrderCustomerValidator struct {
 	Name  *validation.String
 }
 
-func NewOrderCustomerValidator() *OrderCustomerValidator {
+func NewOrderCustomerValidator(base ...string) *OrderCustomerValidator {
 	return &OrderCustomerValidator{
-		Email: validation.NewString("email").NotNull().Email(),
-		Name:  validation.NewString("name").Required().NotNull().MinLength(1),
+		Email: validation.NewString(validation.SubPath(base, "email")...).NotNull().Email(),
+		Name:  validation.NewString(validation.SubPath(base, "name")...).Required().NotNull().MinLength(1),
 	}
 }
 
 func (v *OrderCustomerValidator) Validate(o *OrderCustomer) *ValidatedOrderCustomer {
-	return &ValidatedOrderCustomer{
-		Email: v.Email.Validate(o.Email),
-		Name:  v.Name.Validate(o.Name),
+	if o == nil {
+		return &ValidatedOrderCustomer{}
 	}
+	out := &ValidatedOrderCustomer{}
+	out.Email = v.Email.Validate(o.Email)
+	out.Name = v.Name.Validate(o.Name)
+	return out
+}
+
+func (v *ValidatedOrderCustomer) IsValid() bool {
+	return v.Object.IsValid() &&
+		v.Email.IsValid() &&
+		v.Name.IsValid()
+}
+
+func (v *ValidatedOrderCustomer) Collect(out *[]validation.FieldResult) {
+	if !v.Object.IsValid() {
+		*out = append(*out, &v.Object)
+	}
+	if !v.Email.IsValid() {
+		*out = append(*out, &v.Email)
+	}
+	if !v.Name.IsValid() {
+		*out = append(*out, &v.Name)
+	}
+}
+
+func (v *ValidatedOrderCustomer) Failures() []validation.FieldResult {
+	var out []validation.FieldResult
+	v.Collect(&out)
+	return out
 }

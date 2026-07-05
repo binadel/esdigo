@@ -148,7 +148,7 @@ func (s *String) validateRaw(value types.String) []Error {
 		return errorList
 	}
 
-	if s.notNull && !value.Defined {
+	if s.notNull && value.Present && !value.Defined {
 		errorList = append(errorList, errors.NotNull)
 		return errorList
 	}

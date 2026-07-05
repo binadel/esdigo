@@ -62,6 +62,16 @@ func (p FieldPath) Segments() []string {
 	return p.segments
 }
 
+// SubPath returns base with segment appended, always as a fresh slice. Generated
+// nested validators use it to build a child field's path from a shared base
+// without the sibling paths aliasing one another's backing array.
+func SubPath(base []string, segment string) []string {
+	path := make([]string, len(base)+1)
+	copy(path, base)
+	path[len(base)] = segment
+	return path
+}
+
 // WriteJSON writes JSON form of the field path.
 func (p FieldPath) WriteJSON(w *json.Writer) bool {
 	w.WriteRawBytes(p.json)

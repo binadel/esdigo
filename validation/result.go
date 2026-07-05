@@ -7,6 +7,14 @@ const (
 	keyErrors = `,"errors":`
 )
 
+// FieldResult is the path-aware, serializable view of any field's Result,
+// regardless of its value type. A generated Validated struct's Collect/Failures
+// gather the failing ones into a flat, path-carrying error report.
+type FieldResult interface {
+	IsValid() bool
+	json.ValueWriter
+}
+
 // Result represents the validation result for the field.
 type Result[T any] struct {
 	Path    FieldPath
