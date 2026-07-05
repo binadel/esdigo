@@ -24,6 +24,17 @@
       }
     },
     "shippingAddress": { "$ref": "#/$defs/Address" },
-    "billingAddress": { "type": ["object", "null"], "$ref": "#/$defs/Address" }
+    "billingAddress": { "type": ["object", "null"], "$ref": "#/$defs/Address" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true
+    },
+    "pastAddresses": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Address" }
+    }
   }
 }

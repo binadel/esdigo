@@ -79,6 +79,41 @@ func TestGenerateFormats(t *testing.T) {
 	}
 }
 
+// TestGenerateArrayElements maps each scalar array element type to its wrapper.
+func TestGenerateArrayElements(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"s":{"type":"array","items":{"type":"string"}},
+		"i":{"type":"array","items":{"type":"integer"}},
+		"n":{"type":"array","items":{"type":"number"}},
+		"b":{"type":"array","items":{"type":"boolean"}}
+	}}`
+	out, err := Generate([]byte(s), "example", "Lists")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"types.Array[types.String, *types.String]",
+		"types.Array[types.Int64, *types.Int64]",
+		"types.Array[types.Float64, *types.Float64]",
+		"types.Array[types.Boolean, *types.Boolean]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateArrayErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","properties":{"x":{"type":"array"}}}`), "example", "X"); err == nil {
+		t.Errorf("array without items should error")
+	}
+	nested := `{"type":"object","properties":{"x":{"type":"array","items":{"type":"array","items":{"type":"string"}}}}}`
+	if _, err := Generate([]byte(nested), "example", "X"); err == nil {
+		t.Errorf("array of arrays should error (not supported yet)")
+	}
+}
+
 func TestGenerateUnresolvedRef(t *testing.T) {
 	s := `{"type":"object","properties":{"x":{"$ref":"#/$defs/Missing"}}}`
 	if _, err := Generate([]byte(s), "example", "X"); err == nil {

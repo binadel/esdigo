@@ -162,7 +162,9 @@ type Order struct {
 	BillingAddress  types.Object[Address, *Address]             `json:"billingAddress"`
 	Customer        types.Object[OrderCustomer, *OrderCustomer] `json:"customer"`
 	Id              types.String                                `json:"id"`
+	PastAddresses   types.Array[Address, *Address]              `json:"pastAddresses"`
 	ShippingAddress types.Object[Address, *Address]             `json:"shippingAddress"`
+	Tags            types.Array[types.String, *types.String]    `json:"tags"`
 }
 
 func (o *Order) MarshalJSON() ([]byte, error) {
@@ -214,12 +216,32 @@ func (o *Order) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
+	if o.PastAddresses.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"pastAddresses\":")
+		if !o.PastAddresses.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
 	if o.ShippingAddress.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
 		w.WriteRawString("\"shippingAddress\":")
 		if !o.ShippingAddress.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if o.Tags.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"tags\":")
+		if !o.Tags.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -247,8 +269,12 @@ func (o *Order) ReadJSON(r *json.Reader) bool {
 						ok = o.Customer.ReadJSON(r)
 					case "id":
 						ok = o.Id.ReadJSON(r)
+					case "pastAddresses":
+						ok = o.PastAddresses.ReadJSON(r)
 					case "shippingAddress":
 						ok = o.ShippingAddress.ReadJSON(r)
+					case "tags":
+						ok = o.Tags.ReadJSON(r)
 					default:
 						ok = r.SkipValue()
 					}
@@ -282,7 +308,9 @@ type ValidatedOrder struct {
 	BillingAddress  *ValidatedAddress
 	Customer        *ValidatedOrderCustomer
 	Id              validation.Result[uuid.UUID]
+	PastAddresses   validation.Result[[]*Address]
 	ShippingAddress *ValidatedAddress
+	Tags            validation.Result[[]*types.String]
 }
 
 type OrderValidator struct {
@@ -291,8 +319,10 @@ type OrderValidator struct {
 	Customer              *OrderCustomerValidator
 	customerObject        *validation.Object[OrderCustomer, *OrderCustomer]
 	Id                    *validation.Uuid
+	PastAddresses         *validation.Array[Address, *Address]
 	ShippingAddress       *AddressValidator
 	shippingAddressObject *validation.Object[Address, *Address]
+	Tags                  *validation.Array[types.String, *types.String]
 }
 
 func NewOrderValidator(base ...string) *OrderValidator {
@@ -302,8 +332,10 @@ func NewOrderValidator(base ...string) *OrderValidator {
 		Customer:              NewOrderCustomerValidator(validation.SubPath(base, "customer")...),
 		customerObject:        validation.NewObject[OrderCustomer, *OrderCustomer](validation.SubPath(base, "customer")...).Required().NotNull(),
 		Id:                    validation.NewString(validation.SubPath(base, "id")...).Required().NotNull().Uuid(),
+		PastAddresses:         validation.NewArray[Address, *Address](validation.SubPath(base, "pastAddresses")...).NotNull(),
 		ShippingAddress:       NewAddressValidator(validation.SubPath(base, "shippingAddress")...),
 		shippingAddressObject: validation.NewObject[Address, *Address](validation.SubPath(base, "shippingAddress")...).NotNull(),
+		Tags:                  validation.NewArray[types.String, *types.String](validation.SubPath(base, "tags")...).NotNull().MinItems(1).MaxItems(5).UniqueItems(),
 	}
 }
 
@@ -317,8 +349,10 @@ func (v *OrderValidator) Validate(o *Order) *ValidatedOrder {
 	out.Customer = v.Customer.Validate(o.Customer.Value)
 	out.Customer.Object = v.customerObject.Validate(o.Customer)
 	out.Id = v.Id.Validate(o.Id)
+	out.PastAddresses = v.PastAddresses.Validate(o.PastAddresses)
 	out.ShippingAddress = v.ShippingAddress.Validate(o.ShippingAddress.Value)
 	out.ShippingAddress.Object = v.shippingAddressObject.Validate(o.ShippingAddress)
+	out.Tags = v.Tags.Validate(o.Tags)
 	return out
 }
 
@@ -327,7 +361,9 @@ func (v *ValidatedOrder) IsValid() bool {
 		(v.BillingAddress == nil || v.BillingAddress.IsValid()) &&
 		(v.Customer == nil || v.Customer.IsValid()) &&
 		v.Id.IsValid() &&
-		(v.ShippingAddress == nil || v.ShippingAddress.IsValid())
+		v.PastAddresses.IsValid() &&
+		(v.ShippingAddress == nil || v.ShippingAddress.IsValid()) &&
+		v.Tags.IsValid()
 }
 
 func (v *ValidatedOrder) Collect(out *[]validation.FieldResult) {
@@ -343,8 +379,14 @@ func (v *ValidatedOrder) Collect(out *[]validation.FieldResult) {
 	if !v.Id.IsValid() {
 		*out = append(*out, &v.Id)
 	}
+	if !v.PastAddresses.IsValid() {
+		*out = append(*out, &v.PastAddresses)
+	}
 	if v.ShippingAddress != nil {
 		v.ShippingAddress.Collect(out)
+	}
+	if !v.Tags.IsValid() {
+		*out = append(*out, &v.Tags)
 	}
 }
 

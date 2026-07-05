@@ -112,6 +112,68 @@ func TestOrderNestedErrorPath(t *testing.T) {
 	}
 }
 
+// TestOrderArrays exercises a scalar array (tags) and an object array
+// (pastAddresses): model read/write plus array-level validation.
+func TestOrderArrays(t *testing.T) {
+	in := `{"id":"123e4567-e89b-12d3-a456-426614174000",` +
+		`"customer":{"name":"Ada"},"shippingAddress":{"city":"Paris"},` +
+		`"tags":["vip","eu"],` +
+		`"pastAddresses":[{"city":"Rome"},{"city":"Berlin"}]}`
+
+	var o Order
+	if err := o.UnmarshalJSON([]byte(in)); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// scalar array elements are *types.String
+	if len(o.Tags.Value) != 2 || string(o.Tags.Value[0].Value) != "vip" {
+		t.Errorf("tags not decoded: %+v", o.Tags.Value)
+	}
+	// object array elements are *Address
+	if len(o.PastAddresses.Value) != 2 || string(o.PastAddresses.Value[1].City.Value) != "Berlin" {
+		t.Errorf("pastAddresses not decoded: %+v", o.PastAddresses.Value)
+	}
+
+	out, err := o.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{`"tags":["vip","eu"]`, `"pastAddresses":[{"city":"Rome"}`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output missing %s: %s", want, out)
+		}
+	}
+
+	if r := NewOrderValidator().Validate(&o); !r.IsValid() {
+		t.Errorf("valid arrays should pass; failures=%s", failuresJSON(r.Failures()))
+	}
+}
+
+// TestOrderArrayConstraints checks the array-level rules on tags.
+func TestOrderArrayConstraints(t *testing.T) {
+	base := `{"id":"123e4567-e89b-12d3-a456-426614174000",` +
+		`"customer":{"name":"Ada"},"shippingAddress":{"city":"Paris"},`
+	cases := []struct {
+		name, tags, code string
+	}{
+		{"min", `"tags":[]`, "MIN_ITEMS"},
+		{"max", `"tags":["a","b","c","d","e","f"]`, "MAX_ITEMS"},
+		{"unique", `"tags":["a","a"]`, "UNIQUE_ITEMS"},
+	}
+	for _, c := range cases {
+		var o Order
+		if err := o.UnmarshalJSON([]byte(base + c.tags + "}")); err != nil {
+			t.Fatalf("%s unmarshal: %v", c.name, err)
+		}
+		r := NewOrderValidator().Validate(&o)
+		if r.Tags.IsValid() {
+			t.Errorf("%s: tags should be invalid", c.name)
+		}
+		if report := failuresJSON(r.Failures()); !strings.Contains(report, c.code) {
+			t.Errorf("%s: expected %s in %s", c.name, c.code, report)
+		}
+	}
+}
+
 // failuresJSON serializes a flat failure list as a JSON array for assertions.
 func failuresJSON(failures []validation.FieldResult) string {
 	w := json.NewWriter(128)

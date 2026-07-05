@@ -163,11 +163,101 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 			return nil, err
 		}
 		return objectField(jsonName, child, required, !s.Type.Nullable()), nil
+	case "array":
+		return b.buildArrayField(msgName, jsonName, s, required)
 	case "string", "integer", "number", "boolean":
 		return buildScalarField(jsonName, s, required), nil
 	default:
 		return nil, fmt.Errorf("unsupported type %q for property %q", kind, jsonName)
 	}
+}
+
+// buildArrayField resolves a type:array property to a generic
+// types.Array[Elem,*Elem] field with an array-level validator (item counts,
+// uniqueness). The element type comes from items; an object element registers a
+// child message. Per-element validation is not composed yet.
+func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
+	if s.Items == nil {
+		return nil, fmt.Errorf("array property %q has no items schema", jsonName)
+	}
+	elem, err := b.arrayElem(msgName, jsonName, s.Items)
+	if err != nil {
+		return nil, err
+	}
+
+	notNull := !s.Type.Nullable()
+	f := &Field{
+		GoName:    goName(jsonName),
+		JSONName:  jsonName,
+		Doc:       doc(s),
+		ModelType: fmt.Sprintf("types.Array[%s, *%s]", elem, elem),
+	}
+	f.Validate = required || notNull || hasArrayConstraint(s)
+	if f.Validate {
+		f.ValidatorType = fmt.Sprintf("*validation.Array[%s, *%s]", elem, elem)
+		f.ResultType = fmt.Sprintf("[]*%s", elem)
+		f.NewExpr = arrayExpr(elem, jsonName, required, notNull, s)
+	}
+	return f, nil
+}
+
+// arrayElem returns the Go element type for an array's items schema: a scalar
+// wrapper, or a generated child message for an object / $ref-to-object element.
+func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema) (string, error) {
+	if items.Ref != "" {
+		key := refName(items.Ref)
+		target, ok := b.defs[key]
+		if !ok {
+			return "", fmt.Errorf("unresolved $ref %q in items of %q", items.Ref, jsonName)
+		}
+		if target.Type.Primary() == "object" {
+			child := goName(key)
+			if err := b.buildMessage(child, target); err != nil {
+				return "", err
+			}
+			return child, nil
+		}
+		return b.arrayElem(msgName, jsonName, target)
+	}
+
+	switch kind := items.Type.Primary(); kind {
+	case "string":
+		return "types.String", nil
+	case "integer":
+		return "types.Int64", nil
+	case "number":
+		return "types.Float64", nil
+	case "boolean":
+		return "types.Boolean", nil
+	case "object":
+		child := msgName + goName(jsonName) + "Item"
+		if err := b.buildMessage(child, items); err != nil {
+			return "", err
+		}
+		return child, nil
+	default:
+		return "", fmt.Errorf("unsupported array element type %q in %q", kind, jsonName)
+	}
+}
+
+func hasArrayConstraint(s *schema.Schema) bool {
+	return s.MinItems != nil || s.MaxItems != nil || s.UniqueItems
+}
+
+func arrayExpr(elem, jsonName string, required, notNull bool, s *schema.Schema) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "validation.NewArray[%s, *%s](%s)", elem, elem, subPath(jsonName))
+	writePresence(&b, required, notNull)
+	if s.MinItems != nil {
+		fmt.Fprintf(&b, ".MinItems(%d)", *s.MinItems)
+	}
+	if s.MaxItems != nil {
+		fmt.Fprintf(&b, ".MaxItems(%d)", *s.MaxItems)
+	}
+	if s.UniqueItems {
+		b.WriteString(".UniqueItems()")
+	}
+	return b.String()
 }
 
 // buildRefField resolves a $ref: an object target becomes a shared reference to
