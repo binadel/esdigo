@@ -76,8 +76,13 @@ func TestUserRoleElementValidation(t *testing.T) {
 	if len(r.RolesItems) != 2 || !r.RolesItems[0].IsValid() || r.RolesItems[1].IsValid() {
 		t.Errorf("role element validity wrong: %+v", r.RolesItems)
 	}
-	if report := failuresJSON(r.Failures()); !strings.Contains(report, "MIN_LENGTH") {
+	report := failuresJSON(r.Failures())
+	if !strings.Contains(report, "MIN_LENGTH") {
 		t.Errorf("short role should fail MIN_LENGTH: %s", report)
+	}
+	// the second role (index 1) is the offender; the path carries the index
+	if !strings.Contains(report, `["roles","1"]`) {
+		t.Errorf("failure should carry the indexed element path: %s", report)
 	}
 }
 

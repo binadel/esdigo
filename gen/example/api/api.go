@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/mail"
+	"strconv"
 
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/json/types"
@@ -297,7 +298,7 @@ type UserValidator struct {
 	Email         *validation.Email
 	Id            *validation.Number[int64]
 	Roles         *validation.Array[types.String, *types.String]
-	rolesElem     *validation.String
+	base          []string
 }
 
 func NewUserValidator(base ...string) *UserValidator {
@@ -307,7 +308,7 @@ func NewUserValidator(base ...string) *UserValidator {
 		Email:         validation.NewString(validation.SubPath(base, "email")...).Required().NotNull().Email(),
 		Id:            validation.NewNumber[int64](validation.SubPath(base, "id")...).Required().NotNull().Min(1),
 		Roles:         validation.NewArray[types.String, *types.String](validation.SubPath(base, "roles")...).NotNull().UniqueItems(),
-		rolesElem:     validation.NewString(validation.SubPath(base, "roles")...).NotNull().MinLength(2),
+		base:          base,
 	}
 }
 
@@ -321,8 +322,9 @@ func (v *UserValidator) Validate(u *User) *ValidatedUser {
 	out.Email = v.Email.Validate(u.Email)
 	out.Id = v.Id.Validate(&u.Id)
 	out.Roles = v.Roles.Validate(u.Roles)
-	for _, elem := range u.Roles.Value {
-		out.RolesItems = append(out.RolesItems, v.rolesElem.Validate(*elem))
+	for i, elem := range u.Roles.Value {
+		p := validation.SubPath(validation.SubPath(v.base, "roles"), strconv.Itoa(i))
+		out.RolesItems = append(out.RolesItems, validation.NewString(p...).NotNull().MinLength(2).Validate(*elem))
 	}
 	return out
 }

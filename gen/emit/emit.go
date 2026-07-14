@@ -200,9 +200,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 			continue
 		}
 		fmt.Fprintf(b, "\t%s %s\n", f.GoName, f.ValidatorType)
-		if f.ElemValidate {
-			fmt.Fprintf(b, "\t%s %s\n", elemField(f.GoName), f.ElemValidatorType)
-		}
+	}
+	if hasElemValidate(m) {
+		b.WriteString("\tbase []string\n")
 	}
 	b.WriteString("}\n\n")
 
@@ -219,9 +219,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 			continue
 		}
 		fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.NewExpr)
-		if f.ElemValidate {
-			fmt.Fprintf(b, "\t\t%s: %s,\n", elemField(f.GoName), f.ElemNewExpr)
-		}
+	}
+	if hasElemValidate(m) {
+		b.WriteString("\t\tbase: base,\n")
 	}
 	b.WriteString("\t}\n}\n\n")
 
@@ -248,8 +248,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 			if f.ElemByValue {
 				elemArg = "*elem"
 			}
-			fmt.Fprintf(b, "\tfor _, elem := range %s.%s.Value {\n", arg, f.GoName)
-			fmt.Fprintf(b, "\t\tout.%sItems = append(out.%sItems, v.%s.Validate(%s))\n", f.GoName, f.GoName, elemField(f.GoName), elemArg)
+			fmt.Fprintf(b, "\tfor i, elem := range %s.%s.Value {\n", arg, f.GoName)
+			fmt.Fprintf(b, "\t\tp := validation.SubPath(validation.SubPath(v.base, %q), strconv.Itoa(i))\n", f.JSONName)
+			fmt.Fprintf(b, "\t\tout.%sItems = append(out.%sItems, %s.Validate(%s))\n", f.GoName, f.GoName, f.ElemNewExpr, elemArg)
 			b.WriteString("\t}\n")
 		}
 	}
@@ -308,8 +309,13 @@ func objField(goName string) string {
 	return strings.ToLower(goName[:1]) + goName[1:] + "Object"
 }
 
-// elemField is the unexported per-element validator field name for an array field,
-// e.g. "pastAddressesElem" for GoName "PastAddresses".
-func elemField(goName string) string {
-	return strings.ToLower(goName[:1]) + goName[1:] + "Elem"
+// hasElemValidate reports whether any field validates per element, which means the
+// validator retains its base path to build the indexed element validators.
+func hasElemValidate(m *ir.Message) bool {
+	for _, f := range m.Fields {
+		if f.ElemValidate {
+			return true
+		}
+	}
+	return false
 }

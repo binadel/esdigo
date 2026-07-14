@@ -4,6 +4,7 @@ package example
 
 import (
 	"net/mail"
+	"strconv"
 
 	"github.com/binadel/esdigo/json"
 	"github.com/binadel/esdigo/json/types"
@@ -328,10 +329,10 @@ type OrderValidator struct {
 	customerObject        *validation.Object[OrderCustomer, *OrderCustomer]
 	Id                    *validation.Uuid
 	PastAddresses         *validation.Array[Address, *Address]
-	pastAddressesElem     *AddressValidator
 	ShippingAddress       *AddressValidator
 	shippingAddressObject *validation.Object[Address, *Address]
 	Tags                  *validation.Array[types.String, *types.String]
+	base                  []string
 }
 
 func NewOrderValidator(base ...string) *OrderValidator {
@@ -342,10 +343,10 @@ func NewOrderValidator(base ...string) *OrderValidator {
 		customerObject:        validation.NewObject[OrderCustomer, *OrderCustomer](validation.SubPath(base, "customer")...).Required().NotNull(),
 		Id:                    validation.NewString(validation.SubPath(base, "id")...).Required().NotNull().Uuid(),
 		PastAddresses:         validation.NewArray[Address, *Address](validation.SubPath(base, "pastAddresses")...).NotNull(),
-		pastAddressesElem:     NewAddressValidator(validation.SubPath(base, "pastAddresses")...),
 		ShippingAddress:       NewAddressValidator(validation.SubPath(base, "shippingAddress")...),
 		shippingAddressObject: validation.NewObject[Address, *Address](validation.SubPath(base, "shippingAddress")...).NotNull(),
 		Tags:                  validation.NewArray[types.String, *types.String](validation.SubPath(base, "tags")...).NotNull().MinItems(1).MaxItems(5).UniqueItems(),
+		base:                  base,
 	}
 }
 
@@ -360,8 +361,9 @@ func (v *OrderValidator) Validate(o *Order) *ValidatedOrder {
 	out.Customer.Object = v.customerObject.Validate(o.Customer)
 	out.Id = v.Id.Validate(o.Id)
 	out.PastAddresses = v.PastAddresses.Validate(o.PastAddresses)
-	for _, elem := range o.PastAddresses.Value {
-		out.PastAddressesItems = append(out.PastAddressesItems, v.pastAddressesElem.Validate(elem))
+	for i, elem := range o.PastAddresses.Value {
+		p := validation.SubPath(validation.SubPath(v.base, "pastAddresses"), strconv.Itoa(i))
+		out.PastAddressesItems = append(out.PastAddressesItems, NewAddressValidator(p...).Validate(elem))
 	}
 	out.ShippingAddress = v.ShippingAddress.Validate(o.ShippingAddress.Value)
 	out.ShippingAddress.Object = v.shippingAddressObject.Validate(o.ShippingAddress)

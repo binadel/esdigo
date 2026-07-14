@@ -198,8 +198,9 @@ func TestOrderArrayElementValidation(t *testing.T) {
 	if r.PastAddressesItems[1].IsValid() {
 		t.Errorf("second address (no city) should be invalid")
 	}
-	if report := failuresJSON(r.Failures()); !strings.Contains(report, `["pastAddresses","city"]`) {
-		t.Errorf("failure should carry the element field path: %s", report)
+	// the flat report carries the element INDEX in the path (element 1's city)
+	if report := failuresJSON(r.Failures()); !strings.Contains(report, `["pastAddresses","1","city"]`) {
+		t.Errorf("failure should carry the indexed element path: %s", report)
 	}
 }
 

@@ -50,15 +50,14 @@ type Field struct {
 	ChildNewExpr  string // the child validator constructor, e.g. NewOrderCustomerValidator(...)
 	ObjectNewExpr string // the object-level (presence/null/type) validator constructor
 
-	// Per-element validation for array fields: each element is validated by a
-	// reused element validator, and the results collect into a <Field>Items slice.
-	ElemValidate      bool
-	ElemIsObject      bool   // object element (recurse) vs scalar element
-	ElemChild         string // object element: the child message name
-	ElemValidatorType string // per-element validator type
-	ElemNewExpr       string // per-element validator constructor
-	ElemItemsType     string // the <Field>Items slice element type
-	ElemByValue       bool   // scalar element: Validate takes the dereferenced *elem
+	// Per-element validation for array fields: the generated loop builds a fresh
+	// element validator at the indexed path for each element (so failures carry
+	// their element index), and results collect into a <Field>Items slice.
+	ElemValidate  bool
+	ElemIsObject  bool   // object element (recurse) vs scalar element
+	ElemNewExpr   string // per-element validator constructor (uses the loop's path var `p`)
+	ElemItemsType string // the <Field>Items slice element type
+	ElemByValue   bool   // scalar element: Validate takes the dereferenced *elem
 }
 
 // formatInfo maps a JSON Schema string "format" to the format-specific validator:
@@ -237,23 +236,24 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 	}
 
 	// Per-element validation: recurse into an object element, or validate a scalar
-	// element that carries value constraints. The element validator lives at the
-	// array field's path (element index is structural, via <Field>Items).
+	// element that carries value constraints. The element validator is (re)built per
+	// element at the indexed path `p` the generated loop computes.
 	if elemIsObject {
 		f.ElemValidate = true
 		f.ElemIsObject = true
-		f.ElemChild = elem
-		f.ElemValidatorType = "*" + elem + "Validator"
-		f.ElemNewExpr = fmt.Sprintf("New%sValidator(%s)", elem, subPath(jsonName))
+		f.ElemNewExpr = fmt.Sprintf("New%sValidator(p...)", elem)
 		f.ElemItemsType = "*Validated" + elem
+		f.Imports = append(f.Imports, "strconv")
 	} else if hasValueConstraint(elemSchema) {
 		ef := buildScalarField(jsonName, elemSchema, false)
 		f.ElemValidate = true
-		f.ElemValidatorType = ef.ValidatorType
-		f.ElemNewExpr = ef.NewExpr
+		// Reuse the scalar field's constructor, retargeting its path to the loop's
+		// indexed path variable `p`.
+		f.ElemNewExpr = strings.Replace(ef.NewExpr, subPath(jsonName), "p...", 1)
 		f.ElemItemsType = "validation.Result[" + ef.ResultType + "]"
 		f.ElemByValue = true
 		f.Imports = append(f.Imports, ef.Imports...)
+		f.Imports = append(f.Imports, "strconv")
 	}
 	return f, nil
 }
