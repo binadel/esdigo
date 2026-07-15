@@ -70,6 +70,78 @@ func TestGenerateOpenAPI(t *testing.T) {
 	}
 }
 
+// TestGenerateDir checks the directory merge: a cross-file $ref into another
+// file's $defs resolves, and the shared type is generated once.
+func TestGenerateDir(t *testing.T) {
+	files := map[string][]byte{
+		"user.schema.json": []byte(`{"type":"object","required":["id"],"properties":{
+			"id":{"type":"integer"},
+			"address":{"$ref":"common.json#/$defs/Address"}}}`),
+		"common.json": []byte(`{"$defs":{"Address":{"type":"object","required":["city"],
+			"properties":{"city":{"type":"string"}}}}}`),
+	}
+	out, err := GenerateDir(files, "models")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"package models", "type User struct", "type Address struct", "types.Object[Address, *Address]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "type Address struct"); n != 1 {
+		t.Errorf("Address should be generated once, got %d", n)
+	}
+}
+
+// TestGenerateDirDedup: two files referencing the same shared type generate it once.
+func TestGenerateDirDedup(t *testing.T) {
+	files := map[string][]byte{
+		"a.schema.json": []byte(`{"type":"object","properties":{"addr":{"$ref":"common.json#/$defs/Address"}}}`),
+		"b.schema.json": []byte(`{"type":"object","properties":{"addr":{"$ref":"common.json#/$defs/Address"}}}`),
+		"common.json":   []byte(`{"$defs":{"Address":{"type":"object","properties":{"city":{"type":"string"}}}}}`),
+	}
+	out, err := GenerateDir(files, "models")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if n := strings.Count(got, "type Address struct"); n != 1 {
+		t.Errorf("shared Address should be generated once, got %d:\n%s", n, got)
+	}
+	for _, want := range []string{"type A struct", "type B struct"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}
+
+// TestGenerateDirFileRootRef resolves a bare "<file>.json" ref to that file's root.
+func TestGenerateDirFileRootRef(t *testing.T) {
+	files := map[string][]byte{
+		"user.schema.json": []byte(`{"type":"object","properties":{"home":{"$ref":"address.json"}}}`),
+		"address.json":     []byte(`{"type":"object","required":["city"],"properties":{"city":{"type":"string"}}}`),
+	}
+	out, err := GenerateDir(files, "models")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type User struct", "type Address struct", "types.Object[Address, *Address]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateDirNoObjects(t *testing.T) {
+	files := map[string][]byte{"x.json": []byte(`{"type":"string"}`)}
+	if _, err := GenerateDir(files, "m"); err == nil {
+		t.Errorf("a directory with no object schemas should error")
+	}
+}
+
 func TestGenerateRejectsNonObjectRoot(t *testing.T) {
 	if _, err := Generate([]byte(`{"type":"string"}`), "example", "X"); err == nil {
 		t.Errorf("expected error for non-object root")

@@ -7,6 +7,9 @@ package gen
 
 import (
 	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/binadel/esdigo/gen/emit"
 	"github.com/binadel/esdigo/gen/ir"
@@ -52,4 +55,58 @@ func GenerateAuto(data []byte, pkg, name string) ([]byte, error) {
 		return GenerateOpenAPI(data, pkg)
 	}
 	return Generate(data, pkg, name)
+}
+
+// GenerateDir generates one Go source file from a set of schema files (filename →
+// content). Every file's schemas are merged into a single namespace: a bare
+// schema contributes its root (named after the file) and its $defs; an OpenAPI
+// document contributes its components.schemas. Types are deduplicated by name and
+// $ref resolves across files (e.g. "common.json#/$defs/Address").
+func GenerateDir(files map[string][]byte, pkg string) ([]byte, error) {
+	merged := map[string]*schema.Schema{}
+
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic collision resolution across files
+
+	for _, name := range names {
+		data := files[name]
+		if schema.IsOpenAPI(data) {
+			doc, err := schema.ParseOpenAPI(data)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			for key, s := range doc.Components.Schemas {
+				merged[key] = s
+			}
+			continue
+		}
+		root, err := schema.Parse(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		merged[fileBase(name)] = root // the file root, referenceable as "<file>.json"
+		for key, s := range root.AllDefs() {
+			merged[key] = s
+		}
+	}
+
+	file, err := ir.BuildAll(pkg, merged)
+	if err != nil {
+		return nil, err
+	}
+	if len(file.Messages) == 0 {
+		return nil, fmt.Errorf("no object schemas found in the directory")
+	}
+	return emit.File(file)
+}
+
+// fileBase strips a schema filename to its base name, e.g. "person.schema.json" or
+// "dir/person.json" -> "person".
+func fileBase(name string) string {
+	base := filepath.Base(name)
+	base = strings.TrimSuffix(base, ".json")
+	return strings.TrimSuffix(base, ".schema")
 }

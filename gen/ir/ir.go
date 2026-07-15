@@ -110,7 +110,7 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	}
 
 	b := &builder{
-		defs:    root.AllDefs(),
+		defs:    normalizeDefs(root.AllDefs()),
 		built:   map[string]bool{},
 		imports: map[string]bool{},
 	}
@@ -121,7 +121,7 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	// Emit every object definition too, referenced or not.
 	for _, key := range sortedKeys(b.defs) {
 		if b.defs[key].Type.Primary() == "object" {
-			if err := b.buildMessage(goName(key), b.defs[key]); err != nil {
+			if err := b.buildMessage(key, b.defs[key]); err != nil {
 				return nil, err
 			}
 		}
@@ -141,14 +141,14 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 // the whole set. Non-object schemas become messages only where a ref inlines them.
 func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 	b := &builder{
-		defs:    schemas,
+		defs:    normalizeDefs(schemas),
 		built:   map[string]bool{},
 		imports: map[string]bool{},
 	}
 
-	for _, key := range sortedKeys(schemas) {
-		if schemas[key].Type.Primary() == "object" {
-			if err := b.buildMessage(goName(key), schemas[key]); err != nil {
+	for _, key := range sortedKeys(b.defs) {
+		if b.defs[key].Type.Primary() == "object" {
+			if err := b.buildMessage(key, b.defs[key]); err != nil {
 				return nil, err
 			}
 		}
@@ -263,13 +263,13 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 // resolved items schema (used to build the per-element validator).
 func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema) (elem string, isObject bool, resolved *schema.Schema, err error) {
 	if items.Ref != "" {
-		key := refName(items.Ref)
+		key := goName(refName(items.Ref))
 		target, ok := b.defs[key]
 		if !ok {
 			return "", false, nil, fmt.Errorf("unresolved $ref %q in items of %q", items.Ref, jsonName)
 		}
 		if target.Type.Primary() == "object" {
-			child := goName(key)
+			child := key
 			if err := b.buildMessage(child, target); err != nil {
 				return "", false, nil, err
 			}
@@ -321,13 +321,13 @@ func arrayExpr(elem, jsonName string, required, notNull bool, s *schema.Schema) 
 // buildRefField resolves a $ref: an object target becomes a shared reference to
 // that definition's message; a scalar target is inlined as the field's schema.
 func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
-	key := refName(s.Ref)
+	key := goName(refName(s.Ref))
 	target, ok := b.defs[key]
 	if !ok {
 		return nil, fmt.Errorf("unresolved $ref %q for property %q", s.Ref, jsonName)
 	}
 	if target.Type.Primary() == "object" {
-		child := goName(key)
+		child := key
 		if err := b.buildMessage(child, target); err != nil {
 			return nil, err
 		}
@@ -407,13 +407,36 @@ func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
 	return f
 }
 
-// refName returns the last path segment of a JSON pointer $ref, e.g. "Address"
-// for "#/$defs/Address".
+// refName is the target name of a $ref. It takes a JSON-pointer fragment's last
+// token ("#/$defs/Address" or "common.json#/$defs/Address" -> "Address") or, for a
+// bare file reference ("address.json", "./dir/address.json"), the filename without
+// its .schema/.json extension. The caller normalizes the result with goName.
 func refName(ref string) string {
-	if i := strings.LastIndexByte(ref, '/'); i >= 0 {
-		return ref[i+1:]
+	if i := strings.IndexByte(ref, '#'); i >= 0 {
+		if frag := ref[i+1:]; strings.ContainsRune(frag, '/') {
+			return frag[strings.LastIndexByte(frag, '/')+1:]
+		}
+		ref = ref[:i]
 	}
-	return ref
+	if k := strings.LastIndexAny(ref, `/\`); k >= 0 {
+		ref = ref[k+1:]
+	}
+	ref = strings.TrimSuffix(ref, ".json")
+	return strings.TrimSuffix(ref, ".schema")
+}
+
+// normalizeDefs re-keys a schema set by Go type name, so $ref resolution and
+// generation agree regardless of how names were spelled in the schema (and so
+// same-named types across merged files deduplicate). Deterministic on collisions.
+func normalizeDefs(defs map[string]*schema.Schema) map[string]*schema.Schema {
+	if len(defs) == 0 {
+		return nil
+	}
+	out := make(map[string]*schema.Schema, len(defs))
+	for _, k := range sortedKeys(defs) {
+		out[goName(k)] = defs[k]
+	}
+	return out
 }
 
 func hasValueConstraint(s *schema.Schema) bool {

@@ -89,10 +89,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runDir generates one Go file per *.json schema in dir, into outdir (which
-// defaults to dir). Each schema is generated independently — cross-file $ref and
-// shared-type deduplication are not resolved, so a type defined in two schemas
-// would collide.
+// runDir generates one combined Go file from every *.json schema in dir, into
+// outdir (defaulting to dir) as <pkg>.go. The schemas share one namespace: types
+// are deduplicated by name and $ref resolves across files.
 func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 	if outdir == "" {
 		outdir = dir
@@ -108,7 +107,7 @@ func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 		return 1
 	}
 
-	generated := 0
+	files := map[string][]byte{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -118,32 +117,25 @@ func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
 			return 1
 		}
-		src, err := gen.GenerateAuto(data, pkg, typeNameFromFile(e.Name()))
-		if err != nil {
-			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
-			return 1
-		}
-		outPath := filepath.Join(outdir, outFileName(e.Name()))
-		if err := os.WriteFile(outPath, src, 0o644); err != nil {
-			fmt.Fprintf(stderr, "error: writing %s: %v\n", outPath, err)
-			return 1
-		}
-		generated++
+		files[e.Name()] = data
 	}
-
-	if generated == 0 {
+	if len(files) == 0 {
 		fmt.Fprintf(stderr, "error: no .json schema files in %s\n", dir)
 		return 1
 	}
-	return 0
-}
 
-// outFileName is the generated Go filename for a schema file, e.g.
-// "person.schema.json" -> "person.go".
-func outFileName(name string) string {
-	base := strings.TrimSuffix(name, ".json")
-	base = strings.TrimSuffix(base, ".schema")
-	return base + ".go"
+	src, err := gen.GenerateDir(files, pkg)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	outPath := filepath.Join(outdir, pkg+".go")
+	if err := os.WriteFile(outPath, src, 0o644); err != nil {
+		fmt.Fprintf(stderr, "error: writing %s: %v\n", outPath, err)
+		return 1
+	}
+	return 0
 }
 
 // readSchema loads the schema from path (or stdin when path is empty) and resolves
