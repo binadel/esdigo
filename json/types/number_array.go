@@ -56,6 +56,11 @@ func (a *NumberArray[V, C]) IsValid() bool {
 	return a.Valid
 }
 
+// Elements returns the decoded element slice, for a generic array validator.
+func (a *NumberArray[V, C]) Elements() []V {
+	return a.Value
+}
+
 // Set assigns value and marks the field present, defined, and valid.
 func (a *NumberArray[V, C]) Set(value []V) {
 	*a = NumberArray[V, C]{

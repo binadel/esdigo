@@ -221,11 +221,36 @@ func TestGenerateArrayElements(t *testing.T) {
 		t.Fatalf("generate: %v", err)
 	}
 	got := string(out)
+	// unconstrained scalar arrays map to the lean specialized types
 	for _, want := range []string{
-		"types.Array[types.String, *types.String]",
-		"types.Array[types.Int64, *types.Int64]",
-		"types.Array[types.Float64, *types.Float64]",
-		"types.Array[types.Boolean, *types.Boolean]",
+		"types.StringArray",
+		"types.Int64Array",
+		"types.Float64Array",
+		"types.BooleanArray",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateLeanArrays: an unconstrained scalar array uses the lean specialized
+// type + ScalarArray validator, while a constrained one stays generic.
+func TestGenerateLeanArrays(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"tags":{"type":"array","items":{"type":"string"},"uniqueItems":true},
+		"nums":{"type":"array","items":{"type":"integer"}},
+		"emails":{"type":"array","items":{"type":"string","format":"email"}}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"types.StringArray", "*validation.ScalarArray[string]",
+		"types.Int64Array", "*validation.ScalarArray[int64]",
+		"types.Array[types.String, *types.String]", // emails stays generic (format constraint)
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)

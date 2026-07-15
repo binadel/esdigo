@@ -222,12 +222,24 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 	}
 
 	notNull := !s.IsNullable()
-	f := &Field{
-		GoName:    goName(jsonName),
-		JSONName:  jsonName,
-		Doc:       doc(s),
-		ModelType: fmt.Sprintf("types.Array[%s, *%s]", elem, elem),
+	f := &Field{GoName: goName(jsonName), JSONName: jsonName, Doc: doc(s)}
+
+	// Lean path: a scalar element with no per-element constraints uses the unboxed
+	// specialized array + ScalarArray validator (no boxing, direct-comparison
+	// uniqueness). Everything else uses the generic array.
+	if lean, ok := leanArrays[elemSchema.Type.Primary()]; ok && !elemIsObject && !hasValueConstraint(elemSchema) {
+		f.ModelType = lean.array
+		f.Validate = required || notNull || hasArrayConstraint(s)
+		if f.Validate {
+			f.ValidatorType = fmt.Sprintf("*validation.ScalarArray[%s]", lean.elem)
+			f.ResultType = "[]" + lean.elem
+			f.NewExpr = scalarArrayExpr(lean.elem, jsonName, required, notNull, s)
+			f.ByPointer = true // ScalarArray.Validate takes the wrapper as an interface
+		}
+		return f, nil
 	}
+
+	f.ModelType = fmt.Sprintf("types.Array[%s, *%s]", elem, elem)
 	f.Validate = required || notNull || hasArrayConstraint(s)
 	if f.Validate {
 		f.ValidatorType = fmt.Sprintf("*validation.Array[%s, *%s]", elem, elem)
@@ -302,9 +314,28 @@ func hasArrayConstraint(s *schema.Schema) bool {
 	return s.MinItems != nil || s.MaxItems != nil || s.UniqueItems
 }
 
+// leanArrays maps a scalar element type to the unboxed specialized array model and
+// its Go element type, for the lean scalar-array path.
+var leanArrays = map[string]struct{ array, elem string }{
+	"string":  {"types.StringArray", "string"},
+	"integer": {"types.Int64Array", "int64"},
+	"number":  {"types.Float64Array", "float64"},
+	"boolean": {"types.BooleanArray", "bool"},
+}
+
 func arrayExpr(elem, jsonName string, required, notNull bool, s *schema.Schema) string {
+	return arrayExprCtor(fmt.Sprintf("validation.NewArray[%s, *%s]", elem, elem), jsonName, required, notNull, s)
+}
+
+func scalarArrayExpr(elem, jsonName string, required, notNull bool, s *schema.Schema) string {
+	return arrayExprCtor(fmt.Sprintf("validation.NewScalarArray[%s]", elem), jsonName, required, notNull, s)
+}
+
+// arrayExprCtor renders an array validator constructor plus the shared array-level
+// constraint chain (min/max items, uniqueness).
+func arrayExprCtor(ctor, jsonName string, required, notNull bool, s *schema.Schema) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "validation.NewArray[%s, *%s](%s)", elem, elem, subPath(jsonName))
+	fmt.Fprintf(&b, "%s(%s)", ctor, subPath(jsonName))
 	writePresence(&b, required, notNull)
 	if s.MinItems != nil {
 		fmt.Fprintf(&b, ".MinItems(%d)", *s.MinItems)

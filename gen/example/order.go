@@ -172,7 +172,7 @@ type Order struct {
 	Id              types.String                                `json:"id"`
 	PastAddresses   types.Array[Address, *Address]              `json:"pastAddresses"`
 	ShippingAddress types.Object[Address, *Address]             `json:"shippingAddress"`
-	Tags            types.Array[types.String, *types.String]    `json:"tags"`
+	Tags            types.StringArray                           `json:"tags"`
 }
 
 func (o *Order) MarshalJSON() ([]byte, error) {
@@ -319,7 +319,7 @@ type ValidatedOrder struct {
 	PastAddresses      validation.Result[[]*Address]
 	PastAddressesItems []*ValidatedAddress
 	ShippingAddress    *ValidatedAddress
-	Tags               validation.Result[[]*types.String]
+	Tags               validation.Result[[]string]
 }
 
 type OrderValidator struct {
@@ -331,7 +331,7 @@ type OrderValidator struct {
 	PastAddresses         *validation.Array[Address, *Address]
 	ShippingAddress       *AddressValidator
 	shippingAddressObject *validation.Object[Address, *Address]
-	Tags                  *validation.Array[types.String, *types.String]
+	Tags                  *validation.ScalarArray[string]
 	base                  []string
 }
 
@@ -345,7 +345,7 @@ func NewOrderValidator(base ...string) *OrderValidator {
 		PastAddresses:         validation.NewArray[Address, *Address](validation.SubPath(base, "pastAddresses")...).NotNull(),
 		ShippingAddress:       NewAddressValidator(validation.SubPath(base, "shippingAddress")...),
 		shippingAddressObject: validation.NewObject[Address, *Address](validation.SubPath(base, "shippingAddress")...).NotNull(),
-		Tags:                  validation.NewArray[types.String, *types.String](validation.SubPath(base, "tags")...).NotNull().MinItems(1).MaxItems(5).UniqueItems(),
+		Tags:                  validation.NewScalarArray[string](validation.SubPath(base, "tags")...).NotNull().MinItems(1).MaxItems(5).UniqueItems(),
 		base:                  base,
 	}
 }
@@ -367,7 +367,7 @@ func (v *OrderValidator) Validate(o *Order) *ValidatedOrder {
 	}
 	out.ShippingAddress = v.ShippingAddress.Validate(o.ShippingAddress.Value)
 	out.ShippingAddress.Object = v.shippingAddressObject.Validate(o.ShippingAddress)
-	out.Tags = v.Tags.Validate(o.Tags)
+	out.Tags = v.Tags.Validate(&o.Tags)
 	return out
 }
 

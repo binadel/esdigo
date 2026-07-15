@@ -124,8 +124,8 @@ func TestOrderArrays(t *testing.T) {
 	if err := o.UnmarshalJSON([]byte(in)); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// scalar array elements are *types.String
-	if len(o.Tags.Value) != 2 || string(o.Tags.Value[0].Value) != "vip" {
+	// a plain scalar array is the lean unboxed type: Value is []string
+	if len(o.Tags.Value) != 2 || o.Tags.Value[0] != "vip" {
 		t.Errorf("tags not decoded: %+v", o.Tags.Value)
 	}
 	// object array elements are *Address

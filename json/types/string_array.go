@@ -29,6 +29,11 @@ func (a *StringArray) IsValid() bool {
 	return a.Valid
 }
 
+// Elements returns the decoded element slice, for a generic array validator.
+func (a *StringArray) Elements() []string {
+	return a.Value
+}
+
 // Set assigns value and marks the field present, defined, and valid.
 func (a *StringArray) Set(value []string) {
 	*a = StringArray{

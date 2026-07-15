@@ -27,6 +27,11 @@ func (a *BooleanArray) IsValid() bool {
 	return a.Valid
 }
 
+// Elements returns the decoded element slice, for a generic array validator.
+func (a *BooleanArray) Elements() []bool {
+	return a.Value
+}
+
 // Set assigns value and marks the field present, defined, and valid.
 func (a *BooleanArray) Set(value []bool) {
 	*a = BooleanArray{
