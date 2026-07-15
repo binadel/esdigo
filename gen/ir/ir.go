@@ -198,7 +198,7 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 		if err := b.buildMessage(child, s); err != nil {
 			return nil, err
 		}
-		return objectField(jsonName, child, required, !s.Type.Nullable()), nil
+		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	case "array":
 		return b.buildArrayField(msgName, jsonName, s, required)
 	case "string", "integer", "number", "boolean":
@@ -221,7 +221,7 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 		return nil, err
 	}
 
-	notNull := !s.Type.Nullable()
+	notNull := !s.IsNullable()
 	f := &Field{
 		GoName:    goName(jsonName),
 		JSONName:  jsonName,
@@ -333,7 +333,7 @@ func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, requ
 		}
 		// A bare $ref has no type (notNull); a sibling "type" may relax it to
 		// nullable, e.g. {"type":["object","null"],"$ref":...}.
-		return objectField(jsonName, child, required, !s.Type.Nullable()), nil
+		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	}
 	return b.buildField(msgName, jsonName, target, required)
 }
@@ -367,7 +367,7 @@ func subPath(jsonName string) string {
 }
 
 func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
-	notNull := !s.Type.Nullable()
+	notNull := !s.IsNullable()
 	f := &Field{GoName: goName(jsonName), JSONName: jsonName, Doc: doc(s)}
 
 	switch s.Type.Primary() {

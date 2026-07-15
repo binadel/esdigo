@@ -142,6 +142,29 @@ func TestGenerateDirNoObjects(t *testing.T) {
 	}
 }
 
+// TestGenerateNullable30 checks OpenAPI 3.0's "nullable" keyword: a nullable field
+// omits .NotNull(), while a non-null field keeps it.
+func TestGenerateNullable30(t *testing.T) {
+	s := `{"type":"object","required":["a"],"properties":{
+		"a":{"type":"string"},
+		"b":{"type":"string","nullable":true,"minLength":1}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, `SubPath(base, "a")...).Required().NotNull()`) {
+		t.Errorf("non-null required field a should be Required().NotNull():\n%s", got)
+	}
+	if strings.Contains(got, `SubPath(base, "b")...).NotNull()`) {
+		t.Errorf("nullable field b should not have NotNull:\n%s", got)
+	}
+	if !strings.Contains(got, `SubPath(base, "b")...).MinLength(1)`) {
+		t.Errorf("nullable field b should still carry its constraints:\n%s", got)
+	}
+}
+
 func TestGenerateRejectsNonObjectRoot(t *testing.T) {
 	if _, err := Generate([]byte(`{"type":"string"}`), "example", "X"); err == nil {
 		t.Errorf("expected error for non-object root")

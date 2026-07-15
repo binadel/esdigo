@@ -14,6 +14,10 @@ type Schema struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 
+	// nullability: OpenAPI 3.0 uses this keyword; JSON Schema 2020-12 / OpenAPI 3.1
+	// use type: [..., "null"] instead. Either marks the value nullable.
+	Nullable bool `json:"nullable"`
+
 	// reference
 	Ref string `json:"$ref"`
 
@@ -100,6 +104,12 @@ func (s *Schema) AllDefs() map[string]*Schema {
 		all[k] = v
 	}
 	return all
+}
+
+// IsNullable reports whether null is an allowed value — via the OpenAPI 3.0
+// "nullable" keyword or a "null" entry in the type set (JSON Schema / OpenAPI 3.1).
+func (s *Schema) IsNullable() bool {
+	return s.Nullable || s.Type.Nullable()
 }
 
 // IsRequired reports whether name is in this (object) schema's required list.
