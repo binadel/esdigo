@@ -70,7 +70,6 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 		if !p.Email.WriteJSON(w) {
 			return false
 		}
-		needsComma = true
 	}
 	w.EndObject()
 	return true

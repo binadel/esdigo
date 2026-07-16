@@ -41,23 +41,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	outdir := fs.String("outdir", "", "output directory; writes <pkg>.go there (created if missing)")
 	split := fs.Bool("split", false, "write one file per generated type into -outdir")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json|.yaml|schema-dir>")
-		fmt.Fprintln(stderr, "reads a JSON/YAML schema or OpenAPI doc (or a directory of them) and writes generated Go; omit the file to read stdin.")
+		_, _ = fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json|.yaml|schema-dir>")
+		_, _ = fmt.Fprintln(stderr, "reads a JSON/YAML schema or OpenAPI doc (or a directory of them) and writes generated Go; omit the file to read stdin.")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "error: expected at most one schema file or directory")
+		_, _ = fmt.Fprintln(stderr, "error: expected at most one schema file or directory")
 		return 2
 	}
 	if *out != "" && *split {
-		fmt.Fprintln(stderr, "error: -split writes multiple files; use -outdir, not -o")
+		_, _ = fmt.Fprintln(stderr, "error: -split writes multiple files; use -outdir, not -o")
 		return 2
 	}
 	if *out != "" && *outdir != "" {
-		fmt.Fprintln(stderr, "error: use either -o or -outdir, not both")
+		_, _ = fmt.Fprintln(stderr, "error: use either -o or -outdir, not both")
 		return 2
 	}
 
@@ -65,7 +65,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if path := fs.Arg(0); path != "" {
 		info, err := os.Stat(path)
 		if err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
 		if info.IsDir() {
@@ -75,7 +75,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	data, typeName, err := readSchema(fs.Arg(0), *name, stdin)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
@@ -83,7 +83,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if *split {
 		files, err := gen.GenerateAutoFiles(data, *pkg, typeName)
 		if err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
 		return writeFiles(files, resolveOutdir(*outdir, fs.Arg(0)), stderr)
@@ -91,7 +91,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	src, err := gen.GenerateAuto(data, *pkg, typeName)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
@@ -101,13 +101,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if *out == "" {
 		if _, err := stdout.Write(src); err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
 		return 0
 	}
 	if err := os.WriteFile(*out, src, 0o644); err != nil {
-		fmt.Fprintf(stderr, "error: writing %s: %v\n", *out, err)
+		_, _ = fmt.Fprintf(stderr, "error: writing %s: %v\n", *out, err)
 		return 1
 	}
 	return 0
@@ -123,7 +123,7 @@ func runDir(dir, pkg, outdir string, split bool, stderr io.Writer) int {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
@@ -134,20 +134,20 @@ func runDir(dir, pkg, outdir string, split bool, stderr io.Writer) int {
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
-			fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
+			_, _ = fmt.Fprintf(stderr, "error: %s: %v\n", e.Name(), err)
 			return 1
 		}
 		files[e.Name()] = data
 	}
 	if len(files) == 0 {
-		fmt.Fprintf(stderr, "error: no .json/.yaml schema files in %s\n", dir)
+		_, _ = fmt.Fprintf(stderr, "error: no .json/.yaml schema files in %s\n", dir)
 		return 1
 	}
 
 	if split {
 		out, err := gen.GenerateDirFiles(files, pkg)
 		if err != nil {
-			fmt.Fprintf(stderr, "error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 			return 1
 		}
 		return writeFiles(out, outdir, stderr)
@@ -155,7 +155,7 @@ func runDir(dir, pkg, outdir string, split bool, stderr io.Writer) int {
 
 	src, err := gen.GenerateDir(files, pkg)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	return writeFiles(map[string][]byte{pkg + ".go": src}, outdir, stderr)
@@ -164,13 +164,13 @@ func runDir(dir, pkg, outdir string, split bool, stderr io.Writer) int {
 // writeFiles writes each name->source into dir, creating dir if missing.
 func writeFiles(files map[string][]byte, dir string, stderr io.Writer) int {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	for name, src := range files {
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, src, 0o644); err != nil {
-			fmt.Fprintf(stderr, "error: writing %s: %v\n", p, err)
+			_, _ = fmt.Fprintf(stderr, "error: writing %s: %v\n", p, err)
 			return 1
 		}
 	}

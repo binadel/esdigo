@@ -89,7 +89,8 @@ func (r *Reader) readBooleanSlow() (value bool, ok bool) {
 	}
 
 	c := r.data[r.pos]
-	if c == 't' {
+	switch c {
+	case 't':
 		const literal = "true"
 		for i := 1; i < 4; i++ {
 			if r.pos+i >= len(r.data) {
@@ -103,7 +104,7 @@ func (r *Reader) readBooleanSlow() (value bool, ok bool) {
 				return false, false
 			}
 		}
-	} else if c == 'f' {
+	case 'f':
 		const literal = "false"
 		for i := 1; i < 5; i++ {
 			if r.pos+i >= len(r.data) {
