@@ -1,11 +1,11 @@
-// Command esdigo-gen reads a JSON Schema and writes the generated esdigo model +
-// validator Go source.
+// Command esdigo-gen reads a JSON Schema or OpenAPI document (JSON or YAML) and
+// writes the generated esdigo model + validator Go source.
 //
 // Usage:
 //
-//	esdigo-gen [flags] <schema.json>    # one schema -> -o / stdout
-//	esdigo-gen [flags] < schema.json    # read from stdin
-//	esdigo-gen [flags] <schema-dir>     # every *.json in the dir -> <base>.go
+//	esdigo-gen [flags] <schema.json|.yaml>   # one schema -> -o / stdout
+//	esdigo-gen [flags] < schema.yaml         # read from stdin
+//	esdigo-gen [flags] <schema-dir>          # every *.json/*.yaml -> combined .go
 //
 // Flags:
 //
@@ -39,8 +39,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := fs.String("o", "", "output file (default: stdout)")
 	outdir := fs.String("outdir", "", "output directory for directory mode (default: the input directory)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json|schema-dir>")
-		fmt.Fprintln(stderr, "reads a JSON Schema (or a directory of them) and writes generated Go; omit the file to read stdin.")
+		fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json|.yaml|schema-dir>")
+		fmt.Fprintln(stderr, "reads a JSON/YAML schema or OpenAPI doc (or a directory of them) and writes generated Go; omit the file to read stdin.")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -89,7 +89,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runDir generates one combined Go file from every *.json schema in dir, into
+// runDir generates one combined Go file from every *.json/*.yaml schema in dir, into
 // outdir (defaulting to dir) as <pkg>.go. The schemas share one namespace: types
 // are deduplicated by name and $ref resolves across files.
 func runDir(dir, pkg, outdir string, stderr io.Writer) int {
@@ -109,7 +109,7 @@ func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 
 	files := map[string][]byte{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !isSchemaFile(e.Name()) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
@@ -120,7 +120,7 @@ func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 		files[e.Name()] = data
 	}
 	if len(files) == 0 {
-		fmt.Fprintf(stderr, "error: no .json schema files in %s\n", dir)
+		fmt.Fprintf(stderr, "error: no .json/.yaml schema files in %s\n", dir)
 		return 1
 	}
 
@@ -160,14 +160,24 @@ func readSchema(path, name string, stdin io.Reader) (data []byte, typeName strin
 }
 
 // typeNameFromFile derives a type name from a schema filename by stripping the
-// .schema/.json extensions; gen normalizes it to an exported Go identifier
-// (e.g. "user-profile.schema.json" -> "user-profile" -> "UserProfile").
+// .schema/.json/.yaml/.yml extensions; gen normalizes it to an exported Go
+// identifier (e.g. "user-profile.schema.json" -> "user-profile" -> "UserProfile").
 func typeNameFromFile(path string) string {
 	base := filepath.Base(path)
 	base = strings.TrimSuffix(base, ".json")
+	base = strings.TrimSuffix(base, ".yaml")
+	base = strings.TrimSuffix(base, ".yml")
 	base = strings.TrimSuffix(base, ".schema")
 	if base == "" {
 		return "Root"
 	}
 	return base
+}
+
+// isSchemaFile reports whether name has a schema-file extension the generator
+// reads: JSON or YAML.
+func isSchemaFile(name string) bool {
+	return strings.HasSuffix(name, ".json") ||
+		strings.HasSuffix(name, ".yaml") ||
+		strings.HasSuffix(name, ".yml")
 }

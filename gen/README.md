@@ -1,9 +1,9 @@
 # esdigo code generation
 
 Generate Go **models** and **validators** from a JSON Schema (2020-12) or OpenAPI
-3.1 document. The output has no reflection: each generated type reads and writes
-itself through the `json`/`json/types` packages, and its validator maps a decoded
-value to a typed, path-aware result.
+3.1 document, in either **JSON or YAML**. The output has no reflection: each
+generated type reads and writes itself through the `json`/`json/types` packages,
+and its validator maps a decoded value to a typed, path-aware result.
 
 - **Model** — a struct of `json/types` wrappers with `ReadJSON`/`WriteJSON` and
   `MarshalJSON`/`UnmarshalJSON`.
@@ -31,10 +31,12 @@ Flags: `-pkg` (output package, default `models`), `-name` (root type name; defau
 derived from the filename), `-o` (single-file output, default stdout), `-outdir`
 (directory-mode output, default the input directory).
 
-An **OpenAPI** document is detected automatically (its `components.schemas` each
-become a type). A **directory** is merged into one namespace: types are
-deduplicated by name and `$ref` resolves across files (e.g.
-`common.json#/$defs/Address`).
+Input may be **JSON or YAML** — the format is detected automatically, so OpenAPI
+specs (usually YAML) work directly (`esdigo-gen -pkg models openapi.yaml`); in a
+directory, both `*.json` and `*.yaml`/`*.yml` are read. An **OpenAPI** document is
+also detected automatically (its `components.schemas` each become a type). A
+**directory** is merged into one namespace: types are deduplicated by name and
+`$ref` resolves across files (e.g. `common.json#/$defs/Address`).
 
 ## Library
 

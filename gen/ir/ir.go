@@ -440,8 +440,9 @@ func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
 
 // refName is the target name of a $ref. It takes a JSON-pointer fragment's last
 // token ("#/$defs/Address" or "common.json#/$defs/Address" -> "Address") or, for a
-// bare file reference ("address.json", "./dir/address.json"), the filename without
-// its .schema/.json extension. The caller normalizes the result with goName.
+// bare file reference ("address.json", "address.yaml", "./dir/address.json"), the
+// filename without its .schema/.json/.yaml/.yml extension. The caller normalizes
+// the result with goName.
 func refName(ref string) string {
 	if i := strings.IndexByte(ref, '#'); i >= 0 {
 		if frag := ref[i+1:]; strings.ContainsRune(frag, '/') {
@@ -453,6 +454,8 @@ func refName(ref string) string {
 		ref = ref[k+1:]
 	}
 	ref = strings.TrimSuffix(ref, ".json")
+	ref = strings.TrimSuffix(ref, ".yaml")
+	ref = strings.TrimSuffix(ref, ".yml")
 	return strings.TrimSuffix(ref, ".schema")
 }
 

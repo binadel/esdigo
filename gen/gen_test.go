@@ -39,6 +39,107 @@ func TestGenerateGolden(t *testing.T) {
 	}
 }
 
+// TestGenerateYAMLEquivalent: a YAML schema generates byte-identical output to its
+// JSON equivalent — YAML is normalized to JSON at the boundary, so it flows through
+// the exact same pipeline.
+func TestGenerateYAMLEquivalent(t *testing.T) {
+	jsonSchema := []byte(`{"type":"object","required":["id"],"properties":{
+		"id":{"type":"string","format":"uuid"},
+		"score":{"type":"integer","minimum":0},
+		"tags":{"type":"array","items":{"type":"string"}}
+	}}`)
+	yamlSchema := []byte(`type: object
+required: [id]
+properties:
+  id:
+    type: string
+    format: uuid
+  score:
+    type: integer
+    minimum: 0
+  tags:
+    type: array
+    items:
+      type: string
+`)
+	fromJSON, err := GenerateAuto(jsonSchema, "m", "T")
+	if err != nil {
+		t.Fatalf("generate json: %v", err)
+	}
+	fromYAML, err := GenerateAuto(yamlSchema, "m", "T")
+	if err != nil {
+		t.Fatalf("generate yaml: %v", err)
+	}
+	if string(fromJSON) != string(fromYAML) {
+		t.Errorf("YAML and JSON should generate identical output.\n--- json ---\n%s\n--- yaml ---\n%s", fromJSON, fromYAML)
+	}
+}
+
+// TestGenerateOpenAPIYAML: an OpenAPI document authored in YAML is detected and its
+// components are generated (the common real-world case — specs are usually YAML).
+func TestGenerateOpenAPIYAML(t *testing.T) {
+	doc := []byte(`openapi: 3.1.0
+components:
+  schemas:
+    A:
+      type: object
+      properties:
+        b:
+          $ref: '#/components/schemas/B'
+    B:
+      type: object
+      properties:
+        x:
+          type: string
+`)
+	if !schema.IsOpenAPI(doc) {
+		t.Fatalf("should detect YAML OpenAPI")
+	}
+	out, err := GenerateAuto(doc, "api", "")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type A struct", "type B struct", "types.Object[B, *B]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateDirYAML: directory mode picks up .yaml files and cross-file $refs
+// resolve across a mix of .json and .yaml.
+func TestGenerateDirYAML(t *testing.T) {
+	files := map[string][]byte{
+		"user.yaml": []byte(`type: object
+properties:
+  address:
+    $ref: 'common.yaml#/$defs/Address'
+`),
+		"common.yaml": []byte(`$defs:
+  Address:
+    type: object
+    required: [city]
+    properties:
+      city:
+        type: string
+`),
+	}
+	out, err := GenerateDir(files, "models")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type User struct", "type Address struct", "types.Object[Address, *Address]"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "type Address struct"); n != 1 {
+		t.Errorf("shared Address should be generated once, got %d", n)
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {

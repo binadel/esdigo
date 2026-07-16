@@ -1,10 +1,33 @@
 // Package schema is the generator's input model: a subset of JSON Schema
 // 2020-12 sufficient to drive esdigo code generation. It is parsed with
 // encoding/json — the generator is a build-time tool, so its own input parsing
-// is exempt from the library's zero-reflection rule.
+// is exempt from the library's zero-reflection rule. YAML input is accepted too
+// (OpenAPI specs are usually YAML): it is converted to JSON at the boundary so
+// the encoding/json path below, with its raw-literal and TypeSet handling, is
+// the single source of truth.
 package schema
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"gopkg.in/yaml.v3"
+)
+
+// toJSON normalizes an input document to JSON. Bytes that are already valid JSON
+// pass through unchanged — a lossless fast path that keeps existing JSON inputs
+// byte-identical. Otherwise the document is treated as YAML (a JSON superset) and
+// converted: yaml.v3 decodes mappings to map[string]any and numbers to int/float64,
+// which json.Marshal renders back to faithful literals for the raw-JSON bounds.
+func toJSON(data []byte) ([]byte, error) {
+	if json.Valid(data) {
+		return data, nil
+	}
+	var doc any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return json.Marshal(doc)
+}
 
 // Schema is one JSON Schema node. Numeric bounds and enum/const values are kept
 // as raw JSON so their exact literal text can be emitted verbatim, without going
@@ -53,8 +76,12 @@ type Schema struct {
 	Const json.RawMessage   `json:"const"`
 }
 
-// Parse unmarshals a JSON Schema document.
+// Parse unmarshals a JSON (or YAML) Schema document.
 func Parse(data []byte) (*Schema, error) {
+	data, err := toJSON(data)
+	if err != nil {
+		return nil, err
+	}
 	var s Schema
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
@@ -71,8 +98,12 @@ type OpenAPIDoc struct {
 	} `json:"components"`
 }
 
-// ParseOpenAPI unmarshals an OpenAPI document.
+// ParseOpenAPI unmarshals an OpenAPI document (JSON or YAML).
 func ParseOpenAPI(data []byte) (*OpenAPIDoc, error) {
+	data, err := toJSON(data)
+	if err != nil {
+		return nil, err
+	}
 	var doc OpenAPIDoc
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, err

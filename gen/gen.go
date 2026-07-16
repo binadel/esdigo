@@ -103,10 +103,12 @@ func GenerateDir(files map[string][]byte, pkg string) ([]byte, error) {
 	return emit.File(file)
 }
 
-// fileBase strips a schema filename to its base name, e.g. "person.schema.json" or
-// "dir/person.json" -> "person".
+// fileBase strips a schema filename to its base name, e.g. "person.schema.json",
+// "person.yaml", or "dir/person.json" -> "person".
 func fileBase(name string) string {
 	base := filepath.Base(name)
 	base = strings.TrimSuffix(base, ".json")
+	base = strings.TrimSuffix(base, ".yaml")
+	base = strings.TrimSuffix(base, ".yml")
 	return strings.TrimSuffix(base, ".schema")
 }
