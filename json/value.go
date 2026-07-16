@@ -1,5 +1,7 @@
 package json
 
+// ValueType tags the kind of JSON value held by a Value. Booleans get their own
+// tags (ValueTypeTrue/False) so no boolean needs to be boxed in the Payload.
 type ValueType int
 
 const (
@@ -12,7 +14,18 @@ const (
 	ValueTypeObject
 )
 
-// Value represents a JSON value that holds the type and payload.
+// Value is a dynamically-typed JSON value — the node type of the untyped DOM
+// produced by ReadValue/ReadJSON. Type selects how to interpret Payload:
+//
+//	ValueTypeNull, ValueTypeTrue, ValueTypeFalse → Payload is nil (Type says it all)
+//	ValueTypeNumber                              → Payload is []byte (the raw token, kept
+//	                                                lossless rather than parsed to float64)
+//	ValueTypeString                              → Payload is string
+//	ValueTypeArray                               → Payload is []Value
+//	ValueTypeObject                              → Payload is map[string]Value
+//
+// Construct Values with the reader, not by hand: WriteValue relies on Type and
+// Payload agreeing, and a mismatched pair is written as a failure (false).
 type Value struct {
 	Type    ValueType
 	Payload any
@@ -112,9 +125,11 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 			return
 		}
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		if payload, ok := r.ReadNumber(); ok {
+		if payload, ok := r.ReadRawNumber(); ok {
 			value.Type = ValueTypeNumber
-			value.Payload = payload
+			// Copy: the DOM outlives the input buffer, so it must not alias it
+			// (ReadString copies too). WriteValue asserts []byte to match.
+			value.Payload = append([]byte(nil), payload...)
 		} else {
 			return
 		}
@@ -126,6 +141,40 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 	r.SkipWhitespace()
 
 	return value, true
+}
+
+// PeekType reports the type of the next JSON value from its first non-whitespace
+// byte, without consuming input. ok is false at end of input or on a byte that
+// cannot begin a JSON value.
+func (r *Reader) PeekType() (t ValueType, ok bool) {
+	if r.err != nil {
+		return 0, false
+	}
+
+	r.SkipWhitespace()
+
+	if r.pos >= len(r.data) {
+		return 0, false
+	}
+
+	switch c := r.data[r.pos]; {
+	case c == '{':
+		return ValueTypeObject, true
+	case c == '[':
+		return ValueTypeArray, true
+	case c == '"':
+		return ValueTypeString, true
+	case c == 't':
+		return ValueTypeTrue, true
+	case c == 'f':
+		return ValueTypeFalse, true
+	case c == 'n':
+		return ValueTypeNull, true
+	case c == '-' || (c >= '0' && c <= '9'):
+		return ValueTypeNumber, true
+	default:
+		return 0, false
+	}
 }
 
 // SkipValue skips over the next JSON value without constructing it.

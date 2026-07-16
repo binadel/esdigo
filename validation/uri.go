@@ -10,6 +10,14 @@ import (
 
 type Uri struct {
 	String
+	reference bool
+}
+
+// Reference relaxes the check to accept a relative URI reference in addition to an
+// absolute URI (JSON-Schema uri-reference vs uri).
+func (u *Uri) Reference() *Uri {
+	u.reference = true
+	return u
 }
 
 func (u *Uri) Validate(value types.String) Result[*url.URL] {
@@ -20,13 +28,24 @@ func (u *Uri) Validate(value types.String) Result[*url.URL] {
 		Defined: value.Defined,
 	}
 
-	if !result.IsValid() {
+	// Stop on a base error; also skip parsing an allowed null (no string to parse).
+	if !result.IsValid() || !value.Valid {
 		return result
 	}
 
 	str := utils.UnsafeString(value.Value)
 	uri, err := url.Parse(str)
 	if err != nil {
+		if u.reference {
+			result.Errors = append(result.Errors, errors.InvalidUriReference)
+		} else {
+			result.Errors = append(result.Errors, errors.InvalidUri)
+		}
+		return result
+	}
+
+	// A plain uri must be absolute; a uri-reference may be relative.
+	if !u.reference && !uri.IsAbs() {
 		result.Errors = append(result.Errors, errors.InvalidUri)
 		return result
 	}

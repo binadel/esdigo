@@ -1,6 +1,8 @@
 package json
 
 import (
+	"encoding/binary"
+	"math/bits"
 	"unicode/utf8"
 
 	"github.com/binadel/esdigo/utils"
@@ -8,19 +10,83 @@ import (
 
 const hex = "0123456789abcdef"
 
+// hexVal maps a byte to its hexadecimal value, or 0xff if it is not a hex digit.
+var hexVal [256]uint8
+
+func init() {
+	for i := range hexVal {
+		hexVal[i] = 0xff
+	}
+	for c := byte('0'); c <= '9'; c++ {
+		hexVal[c] = c - '0'
+	}
+	for c := byte('a'); c <= 'f'; c++ {
+		hexVal[c] = c - 'a' + 10
+	}
+	for c := byte('A'); c <= 'F'; c++ {
+		hexVal[c] = c - 'A' + 10
+	}
+}
+
+// stringSpecial sets the high (0x80) bit of each lane of an 8-byte little-endian
+// word whose byte must be handled inside a JSON string: a quote ('"'), a backslash
+// ('\\'), or a control character (< 0x20). bits.TrailingZeros64(result)>>3 gives
+// the offset of the first such byte.
+//
+// The control test can also flag a 0x20 that immediately follows a control byte
+// (a SWAR subtraction borrow), but such a false flag can only ever appear AFTER a
+// genuine special byte, so the FIRST flagged lane is always genuine.
+func stringSpecial(word uint64) uint64 {
+	const ones = uint64(0x0101010101010101)
+	const high = uint64(0x8080808080808080)
+	q := word ^ 0x2222222222222222 // '"'  -> zero lanes where quote
+	s := word ^ 0x5c5c5c5c5c5c5c5c // '\\' -> zero lanes where backslash
+	hasQuote := (q - ones) &^ q
+	hasSlash := (s - ones) &^ s
+	hasCtrl := (word - 0x2020202020202020) &^ word
+	return (hasQuote | hasSlash | hasCtrl) & high
+}
+
+// indexSpecial returns the index of the first byte in b that must be handled
+// inside a JSON string ('"', '\\', or < 0x20), or len(b) if there is none. It
+// scans eight bytes at a time (SWAR) with a byte-wise tail.
+func indexSpecial(b []byte) int {
+	i, n := 0, len(b)
+	for i+8 <= n {
+		if mask := stringSpecial(binary.LittleEndian.Uint64(b[i:])); mask != 0 {
+			return i + bits.TrailingZeros64(mask)>>3
+		}
+		i += 8
+	}
+	for i < n {
+		if c := b[i]; c == '"' || c == '\\' || c < 0x20 {
+			return i
+		}
+		i++
+	}
+	return n
+}
+
+// WriteString writes value as a quoted, escaped JSON string. Only the characters
+// JSON requires are escaped (quote, backslash, and control characters); '<', '>',
+// '&' and U+2028/2029 are emitted raw, so the output is not HTML/JS-embed safe.
 func (w *Writer) WriteString(value string) {
-	bytes := utils.UnsafeBytes(value)
 	w.data = append(w.data, '"')
-	w.writeEscapedString(bytes)
+	w.writeEscapedString(utils.UnsafeBytes(value))
 	w.data = append(w.data, '"')
 }
 
+// WriteStringBytes is WriteString for a []byte, avoiding a []byte→string
+// conversion at the call site.
 func (w *Writer) WriteStringBytes(value []byte) {
 	w.data = append(w.data, '"')
 	w.writeEscapedString(value)
 	w.data = append(w.data, '"')
 }
 
+// ReadString reads the next JSON string and returns its decoded contents as a
+// string. Unlike ReadStringBytes the result is always a copy, so it stays valid
+// after the input buffer is reused.
 func (r *Reader) ReadString() (string, bool) {
 	if bytes, ok := r.ReadStringBytes(); ok {
 		return string(bytes), true
@@ -28,6 +94,14 @@ func (r *Reader) ReadString() (string, bool) {
 	return "", false
 }
 
+// ReadStringBytes reads the next JSON string and returns its decoded bytes,
+// resolving escapes. It returns false without consuming input if the next value
+// is not a string, and sets a reader error only for a malformed string.
+//
+// ALIASING: when the string contains no escapes the result is a zero-copy
+// sub-slice of the input buffer; only an escaped string is a fresh allocation. Do
+// not retain the result across a reuse of the input buffer (or copy it, e.g. via
+// ReadString) if you might.
 func (r *Reader) ReadStringBytes() ([]byte, bool) {
 	if r.err != nil {
 		return nil, false
@@ -45,37 +119,33 @@ func (r *Reader) ReadStringBytes() ([]byte, bool) {
 
 	start := r.pos
 
-	// fast path: scan for closing quote, backslash, or invalid control characters
-	for {
-		if r.pos >= len(r.data) {
-			r.SetEofError()
-			return nil, false
-		}
+	// fast path: scan to the closing quote, a backslash, or a control character
+	r.pos += indexSpecial(r.data[r.pos:])
 
-		c := r.data[r.pos]
-
-		if c == '"' {
-			// zero allocation success
-			value := r.data[start:r.pos]
-			r.pos++
-			return value, true
-		}
-
-		if c == '\\' {
-			// escape character found
-			return r.readEscapedString(start)
-		}
-
-		if c < 0x20 {
-			// unescaped control characters are not permitted
-			r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
-			return nil, false
-		}
-
-		r.pos++
+	if r.pos >= len(r.data) {
+		r.SetEofError()
+		return nil, false
 	}
+
+	c := r.data[r.pos]
+	if c == '"' {
+		// zero allocation success
+		value := r.data[start:r.pos]
+		r.pos++
+		return value, true
+	}
+	if c == '\\' {
+		return r.readEscapedString(start)
+	}
+
+	// unescaped control characters are not permitted
+	r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
+	return nil, false
 }
 
+// SkipString validates and advances past the next JSON string without decoding
+// it. Like ReadStringBytes it returns false (without consuming) on a non-string,
+// and sets a reader error on a malformed one.
 func (r *Reader) SkipString() bool {
 	if r.err != nil {
 		return false
@@ -91,65 +161,55 @@ func (r *Reader) SkipString() bool {
 	}
 	r.pos++
 
-	for r.pos < len(r.data) {
-		c := r.data[r.pos]
+	for {
+		r.pos += indexSpecial(r.data[r.pos:])
 
+		if r.pos >= len(r.data) {
+			r.SetEofError()
+			return false
+		}
+
+		c := r.data[r.pos]
 		if c == '"' {
 			r.pos++
 			return true
 		}
-
-		if c == '\\' {
-			// escape character found
-			r.pos++
-			if r.pos >= len(r.data) {
-				r.SetEofError()
-				return false
-			}
-
-			switch r.data[r.pos] {
-			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
-				r.pos++
-			case 'u':
-				r.pos++
-				if !r.skipUnicode() {
-					return false
-				}
-			default:
-				r.SetSyntaxError("invalid escape character '\\%c' in string", r.data[r.pos])
-				return false
-			}
-			continue
-		}
-
 		if c < 0x20 {
-			// unescaped control characters are not permitted
 			r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
 			return false
 		}
 
+		// backslash: skip the escape
 		r.pos++
-	}
+		if r.pos >= len(r.data) {
+			r.SetEofError()
+			return false
+		}
 
-	// if we exit the loop without returning, we hit EOF before a closing quote
-	r.SetEofError()
-	return false
+		switch r.data[r.pos] {
+		case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+			r.pos++
+		case 'u':
+			r.pos++
+			if !r.skipUnicode() {
+				return false
+			}
+		default:
+			r.SetSyntaxError("invalid escape character '\\%c' in string", r.data[r.pos])
+			return false
+		}
+	}
 }
 
 func (w *Writer) writeEscapedString(value []byte) {
-	start := 0
-	for i := 0; i < len(value); i++ {
-		c := value[i]
-
-		if c >= 0x20 && c != '\\' && c != '"' {
-			continue
+	for {
+		i := indexSpecial(value)
+		w.data = append(w.data, value[:i]...)
+		if i == len(value) {
+			return
 		}
 
-		if start < i {
-			w.data = append(w.data, value[start:i]...)
-		}
-
-		switch c {
+		switch c := value[i]; c {
 		case '\\', '"':
 			w.data = append(w.data, '\\', c)
 		case '\b':
@@ -164,56 +224,40 @@ func (w *Writer) writeEscapedString(value []byte) {
 			w.data = append(w.data, '\\', 't')
 		default:
 			// control characters < 0x20
-			w.data = append(
-				w.data,
-				'\\', 'u', '0', '0',
-				hex[c>>4],
-				hex[c&0xF],
-			)
+			w.data = append(w.data, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xF])
 		}
-		start = i + 1
-	}
-	if start < len(value) {
-		w.data = append(w.data, value[start:]...)
+
+		value = value[i+1:]
 	}
 }
 
 func (r *Reader) readEscapedString(start int) ([]byte, bool) {
-	// allocate a buffer, we start with the capacity of the remaining data
-	// to minimize re-allocations, though it may be slightly larger than needed
+	// allocate a buffer starting from the clean prefix plus a little headroom
 	buffer := make([]byte, 0, r.pos-start+16)
-
-	// copy the clean, unescaped prefix we already scanned in the fast path
 	buffer = append(buffer, r.data[start:r.pos]...)
 
 	for {
+		// copy the clean run up to the next special byte in one shot
+		runStart := r.pos
+		r.pos += indexSpecial(r.data[r.pos:])
+		buffer = append(buffer, r.data[runStart:r.pos]...)
+
 		if r.pos >= len(r.data) {
 			r.SetEofError()
 			return nil, false
 		}
 
 		c := r.data[r.pos]
-
 		if c == '"' {
-			// skip closing quote and return the buffer
 			r.pos++
 			return buffer, true
 		}
-
 		if c < 0x20 {
-			// unescaped control characters are not permitted
 			r.SetSyntaxError("invalid unescaped control character 0x%02x in string", c)
 			return nil, false
 		}
 
-		if c != '\\' {
-			// normal character
-			buffer = append(buffer, c)
-			r.pos++
-			continue
-		}
-
-		// we hit a backslash
+		// backslash
 		r.pos++
 		if r.pos >= len(r.data) {
 			r.SetEofError()
@@ -242,8 +286,8 @@ func (r *Reader) readEscapedString(start int) ([]byte, bool) {
 			r.pos++
 		case 'u':
 			r.pos++
-			u, success := r.readUnicode()
-			if !success {
+			u, ok := r.readUnicode()
+			if !ok {
 				return nil, false
 			}
 			// encode the rune back into utf-8 bytes in our buffer
@@ -307,8 +351,8 @@ func (r *Reader) skipUnicode() bool {
 	}
 
 	for i := 0; i < 4; i++ {
-		if c := r.data[r.pos]; (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
-			r.SetSyntaxError("invalid character '%c' in \\u hexadecimal escape", c)
+		if hexVal[r.data[r.pos]] == 0xff {
+			r.SetSyntaxError("invalid character '%c' in \\u hexadecimal escape", r.data[r.pos])
 			return false
 		}
 		r.pos++
@@ -327,19 +371,12 @@ func (r *Reader) parseHex4() (rune, bool) {
 
 	var val rune
 	for i := 0; i < 4; i++ {
-		c := r.data[r.pos]
-		val <<= 4
-		switch {
-		case c >= '0' && c <= '9':
-			val |= rune(c - '0')
-		case c >= 'a' && c <= 'f':
-			val |= rune(c - 'a' + 10)
-		case c >= 'A' && c <= 'F':
-			val |= rune(c - 'A' + 10)
-		default:
-			r.SetSyntaxError("invalid character '%c' in \\u hexadecimal escape", c)
+		h := hexVal[r.data[r.pos]]
+		if h == 0xff {
+			r.SetSyntaxError("invalid character '%c' in \\u hexadecimal escape", r.data[r.pos])
 			return 0, false
 		}
+		val = val<<4 | rune(h)
 		r.pos++
 	}
 	return val, true

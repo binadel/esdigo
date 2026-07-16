@@ -5,9 +5,10 @@ func (w *Writer) BeginArray() {
 	w.data = append(w.data, '[')
 }
 
-// BeginArray attempts to read the JSON begin-array token '['.
+// BeginArray attempts to read the JSON begin-array token '['. On success it also
+// records the nesting depth, failing if the maximum depth would be exceeded.
 func (r *Reader) BeginArray() bool {
-	return r.readByte('[')
+	return r.readByte('[') && r.enterDepth()
 }
 
 // EndArray writes the JSON end-array token ']' to the writer buffer.
@@ -15,9 +16,14 @@ func (w *Writer) EndArray() {
 	w.data = append(w.data, ']')
 }
 
-// EndArray attempts to read the JSON end-array token ']'.
+// EndArray attempts to read the JSON end-array token ']', releasing one level of
+// nesting depth when it matches.
 func (r *Reader) EndArray() bool {
-	return r.readByte(']')
+	if r.readByte(']') {
+		r.depth--
+		return true
+	}
+	return false
 }
 
 // WriteArray serializes a slice of Value as a JSON array.

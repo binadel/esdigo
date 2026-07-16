@@ -45,6 +45,14 @@ func TestReadNumber(t *testing.T) {
 		{"Exceed Min Int16 Exponent", "1e-32769", NumberValue{Type: NumberTypeBig}, true, false},
 		{"Large Number Beyond uint64", "18446744073709551616", NumberValue{Type: NumberTypeBig}, true, false},
 
+		// --- Magnitude Overflow (DoS guard: too large to materialize) ---
+		// maxNumberDigits is 65536: magnitude = intDigits + |explicit exponent|.
+		{"At Overflow Boundary Big", "1e65535", NumberValue{Type: NumberTypeBig}, true, false},
+		{"Past Overflow Boundary", "1e65536", NumberValue{Type: NumberTypeOverflow}, true, false},
+		{"Overflow Huge Positive", "1e999999999", NumberValue{Type: NumberTypeOverflow}, true, false},
+		{"Overflow Huge Negative", "1e-999999999", NumberValue{Type: NumberTypeOverflow}, true, false},
+		{"Overflow Negative Sign", "-3e70000", NumberValue{Negative: true, Type: NumberTypeOverflow}, true, false},
+
 		// --- Internal Offset Resolution (Preventing Silent Corruption Fix) ---
 		// Fraction creates a massive negative exponent, "e" offsets it back to 0.
 		{"Huge Internal Offset", "1.000000000000000000000e19", NumberValue{Negative: false, Coefficient: 10000000000000000000, Exponent: 0, Type: NumberTypeInteger}, true, false},
@@ -68,7 +76,7 @@ func TestReadNumber(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &Reader{data: []byte(tt.input), pos: 0}
-			val, ok := r.ReadNumber()
+			val, _, ok := r.ReadNumber()
 
 			if tt.wantError {
 				if r.err == nil {

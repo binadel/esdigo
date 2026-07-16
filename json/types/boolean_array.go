@@ -2,6 +2,8 @@ package types
 
 import "github.com/binadel/esdigo/json"
 
+// BooleanArray is a JSON array of booleans, stored unboxed in a []bool. It
+// carries the usual tri-state: Present, Defined, and Valid. See json.OptionalValue.
 type BooleanArray struct {
 	Present bool
 	Defined bool
@@ -9,18 +11,28 @@ type BooleanArray struct {
 	Value   []bool
 }
 
-func (a BooleanArray) IsPresent() bool {
+// IsPresent reports whether the field appeared in the input.
+func (a *BooleanArray) IsPresent() bool {
 	return a.Present
 }
 
-func (a BooleanArray) IsDefined() bool {
+// IsDefined reports whether the field was present and non-null.
+func (a *BooleanArray) IsDefined() bool {
 	return a.Defined
 }
 
-func (a BooleanArray) IsValid() bool {
+// IsValid reports whether the array was well-formed and every element was a
+// boolean (no element was dropped).
+func (a *BooleanArray) IsValid() bool {
 	return a.Valid
 }
 
+// Elements returns the decoded element slice, for a generic array validator.
+func (a *BooleanArray) Elements() []bool {
+	return a.Value
+}
+
+// Set assigns value and marks the field present, defined, and valid.
 func (a *BooleanArray) Set(value []bool) {
 	*a = BooleanArray{
 		Present: true,
@@ -30,23 +42,24 @@ func (a *BooleanArray) Set(value []bool) {
 	}
 }
 
+// SetNull marks the field present but explicitly null (not defined).
 func (a *BooleanArray) SetNull() {
 	*a = BooleanArray{
 		Present: true,
 	}
 }
 
-func (a BooleanArray) WriteJSON(w *json.Writer) bool {
+// WriteJSON writes the array, or null when the field is not defined. It returns
+// false only when the field is defined but invalid.
+func (a *BooleanArray) WriteJSON(w *json.Writer) bool {
 	if a.Defined {
 		if a.Valid {
-			needsComma := false
 			w.BeginArray()
-			for _, v := range a.Value {
-				if needsComma {
+			for i, v := range a.Value {
+				if i > 0 {
 					w.ValueSeparator()
 				}
 				w.WriteBoolean(v)
-				needsComma = true
 			}
 			w.EndArray()
 		} else {
@@ -58,6 +71,10 @@ func (a BooleanArray) WriteJSON(w *json.Writer) bool {
 	return true
 }
 
+// ReadJSON reads a JSON array of booleans (or null) into a. A non-boolean element
+// is dropped and marks the array Valid=false (the boolean elements are still
+// kept). Only a malformed array — an unskippable element or a missing separator —
+// stops the reader.
 func (a *BooleanArray) ReadJSON(r *json.Reader) bool {
 	*a = BooleanArray{
 		Present: true,

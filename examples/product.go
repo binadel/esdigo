@@ -11,13 +11,9 @@ import (
 type Product struct {
 	Title       types.String
 	Description types.String
-	Price       types.Number
+	Price       types.RawNumber
 	IsPublished types.Boolean
 	Email       types.String
-}
-
-func (p *Product) CreateValue() *Product {
-	return &Product{}
 }
 
 func (p *Product) MarshalJSON() ([]byte, error) {
@@ -74,7 +70,6 @@ func (p *Product) WriteJSON(w *json.Writer) bool {
 		if !p.Email.WriteJSON(w) {
 			return false
 		}
-		needsComma = true
 	}
 	w.EndObject()
 	return true
@@ -154,7 +149,7 @@ func NewProductValidator() *ProductValidator {
 	return &ProductValidator{
 		Title:       validation.NewString("title").Required().NotNull().MinLength(2).MaxLength(256),
 		IsPublished: validation.NewBoolean("isPublished").Required().NotNull(),
-		Email:       validation.NewString("email").Required().Pattern(validation.PatternEmail).Email(),
+		Email:       validation.NewString("email").Required().Email(),
 	}
 }
 

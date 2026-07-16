@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "title": "is a registered person.",
+  "required": ["firstName", "age"],
+  "properties": {
+    "firstName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "lastName": {
+      "type": ["string", "null"],
+      "maxLength": 100
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 150
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "multipleOf": 0.5
+    },
+    "role": {
+      "type": "string",
+      "enum": ["admin", "user", "guest"]
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "homepage": {
+      "type": ["string", "null"],
+      "format": "uri"
+    }
+  }
+}
