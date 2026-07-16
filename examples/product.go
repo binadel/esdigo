@@ -150,7 +150,7 @@ func NewProductValidator() *ProductValidator {
 	return &ProductValidator{
 		Title:       validation.NewString("title").Required().NotNull().MinLength(2).MaxLength(256),
 		IsPublished: validation.NewBoolean("isPublished").Required().NotNull(),
-		Email:       validation.NewString("email").Required().Pattern(validation.PatternEmail).Email(),
+		Email:       validation.NewString("email").Required().Email(),
 	}
 }
 

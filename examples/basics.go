@@ -2,17 +2,9 @@ package main
 
 import (
 	"fmt"
-	"math/big"
 
 	"github.com/binadel/esdigo/json"
 )
-
-type Num struct {
-	Present bool
-	Defined bool
-	Valid   bool
-	Value   [21]byte
-}
 
 func main() {
 	p := &Product{}
@@ -57,12 +49,4 @@ func main() {
 	validated.IsPublished.WriteJSON(w)
 	validated.Email.WriteJSON(w)
 	fmt.Println(string(w.Bytes()))
-
-	var x big.Float
-	z, ok := x.SetString("12345.00")
-	if ok {
-		fmt.Println(z.Int)
-	} else {
-		fmt.Println(false)
-	}
 }

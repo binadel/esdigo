@@ -131,7 +131,7 @@ func buildDir(files map[string][]byte, pkg string) (*ir.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		merged[fileBase(name)] = root // the file root, referenceable as "<file>.json"
+		merged[fileBase(name)] = root // the file root, referenceable as "<file>.json"/".yaml"
 		for key, s := range root.AllDefs() {
 			merged[key] = s
 		}

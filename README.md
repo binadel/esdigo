@@ -2,7 +2,7 @@
 
 A zero-reflection JSON toolkit for Go: a fast reader/writer, typed field
 wrappers, fused serialization-and-validation, and a code generator that turns a
-JSON Schema or OpenAPI document into models and validators.
+JSON Schema or OpenAPI document (JSON or YAML) into models and validators.
 
 ## Packages
 
@@ -21,6 +21,7 @@ JSON Schema or OpenAPI document into models and validators.
 go run github.com/binadel/esdigo/gen/cmd/esdigo-gen -pkg models schema.json
 ```
 
-turns a JSON Schema (2020-12) or OpenAPI 3.1 document into a Go model (with
-`ReadJSON`/`WriteJSON`) and a validator that walks the whole object tree and
-reports failures with their full paths. Full guide: **[gen/README.md](gen/README.md)**.
+turns a JSON Schema (2020-12) or OpenAPI 3.1 document — in JSON or YAML — into a
+Go model (with `ReadJSON`/`WriteJSON`) and a validator that walks the whole object
+tree and reports failures with their full paths. Full guide:
+**[gen/README.md](gen/README.md)**.
