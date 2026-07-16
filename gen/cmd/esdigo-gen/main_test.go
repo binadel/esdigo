@@ -11,6 +11,10 @@ import (
 
 const objectSchema = `{"type":"object","properties":{"name":{"type":"string"}}}`
 
+// nestedSchema has an inline child object, so it generates two types (Root and
+// RootInner) — enough to exercise split output.
+const nestedSchema = `{"type":"object","properties":{"inner":{"type":"object","properties":{"x":{"type":"string"}}}}}`
+
 func TestRunStdinToStdout(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := run([]string{"-pkg", "demo"}, strings.NewReader(objectSchema), &out, &errb)
@@ -139,11 +143,88 @@ func TestRunDirectoryBadSchema(t *testing.T) {
 	}
 }
 
+func TestRunSplitSingle(t *testing.T) {
+	out := t.TempDir()
+	var errb bytes.Buffer
+	code := run([]string{"-pkg", "demo", "-split", "-outdir", out}, strings.NewReader(nestedSchema), io.Discard, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	// each type lands in its own snake_case file
+	root, err := os.ReadFile(filepath.Join(out, "root.go"))
+	if err != nil {
+		t.Fatalf("root.go: %v", err)
+	}
+	if !strings.Contains(string(root), "type Root struct") || !strings.Contains(string(root), "package demo") {
+		t.Errorf("root.go wrong: %s", root)
+	}
+	inner, err := os.ReadFile(filepath.Join(out, "root_inner.go"))
+	if err != nil {
+		t.Fatalf("root_inner.go: %v", err)
+	}
+	if !strings.Contains(string(inner), "type RootInner struct") {
+		t.Errorf("root_inner.go missing type RootInner: %s", inner)
+	}
+}
+
+func TestRunOutdirSingleCreatesDir(t *testing.T) {
+	// a not-yet-existing directory is created
+	sub := filepath.Join(t.TempDir(), "gen", "out")
+	var errb bytes.Buffer
+	code := run([]string{"-pkg", "demo", "-outdir", sub}, strings.NewReader(objectSchema), io.Discard, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	// single input with -outdir writes the combined file as <pkg>.go
+	got, err := os.ReadFile(filepath.Join(sub, "demo.go"))
+	if err != nil {
+		t.Fatalf("demo.go: %v", err)
+	}
+	if !strings.Contains(string(got), "type Root struct") {
+		t.Errorf("wrong content: %s", got)
+	}
+}
+
+func TestRunSplitDirectory(t *testing.T) {
+	in := t.TempDir()
+	out := t.TempDir()
+	if err := os.WriteFile(filepath.Join(in, "person.schema.json"), []byte(objectSchema), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(in, "account.json"), []byte(`{"type":"object","properties":{"id":{"type":"integer"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	if code := run([]string{"-pkg", "demo", "-split", "-outdir", out, in}, nil, io.Discard, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	for _, name := range []string{"person.go", "account.go"} {
+		if _, err := os.Stat(filepath.Join(out, name)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, "demo.go")); err == nil {
+		t.Errorf("split mode should not also write the combined demo.go")
+	}
+}
+
+func TestRunSplitRejectsOutputFile(t *testing.T) {
+	if code := run([]string{"-split", "-o", "x.go"}, strings.NewReader(objectSchema), io.Discard, io.Discard); code != 2 {
+		t.Errorf("-split with -o should exit 2, got %d", code)
+	}
+}
+
+func TestRunOutputFileAndOutdirConflict(t *testing.T) {
+	if code := run([]string{"-o", "x.go", "-outdir", "d"}, strings.NewReader(objectSchema), io.Discard, io.Discard); code != 2 {
+		t.Errorf("-o with -outdir should exit 2, got %d", code)
+	}
+}
+
 func TestTypeNameFromFile(t *testing.T) {
 	cases := map[string]string{
-		"person.schema.json": "person",
-		"user-profile.json":  "user-profile",
-		"data.json":          "data",
+		"person.schema.json":     "person",
+		"user-profile.json":      "user-profile",
+		"data.json":              "data",
 		"/a/b/order.schema.json": "order",
 	}
 	for path, want := range cases {

@@ -3,16 +3,17 @@
 //
 // Usage:
 //
-//	esdigo-gen [flags] <schema.json|.yaml>   # one schema -> -o / stdout
+//	esdigo-gen [flags] <schema.json|.yaml>   # one schema -> -o / -outdir / stdout
 //	esdigo-gen [flags] < schema.yaml         # read from stdin
 //	esdigo-gen [flags] <schema-dir>          # every *.json/*.yaml -> combined .go
 //
 // Flags:
 //
 //	-pkg     output package name (default "models")
-//	-name    root Go type name (single-file only; default: derived from the filename)
-//	-o       output file for single-file mode (default: stdout)
-//	-outdir  output directory for directory mode (default: the input directory)
+//	-name    root Go type name (single schema only; default: derived from the filename)
+//	-o       output file for the combined single file (default: stdout)
+//	-outdir  output directory; writes <pkg>.go there (created if missing)
+//	-split   write one file per generated type into -outdir (e.g. asset_response.go)
 package main
 
 import (
@@ -36,8 +37,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	pkg := fs.String("pkg", "models", "output package name")
 	name := fs.String("name", "", "root Go type name (default: derived from the input filename)")
-	out := fs.String("o", "", "output file (default: stdout)")
-	outdir := fs.String("outdir", "", "output directory for directory mode (default: the input directory)")
+	out := fs.String("o", "", "output file for the combined single file (default: stdout)")
+	outdir := fs.String("outdir", "", "output directory; writes <pkg>.go there (created if missing)")
+	split := fs.Bool("split", false, "write one file per generated type into -outdir")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "usage: esdigo-gen [flags] <schema.json|.yaml|schema-dir>")
 		fmt.Fprintln(stderr, "reads a JSON/YAML schema or OpenAPI doc (or a directory of them) and writes generated Go; omit the file to read stdin.")
@@ -50,8 +52,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "error: expected at most one schema file or directory")
 		return 2
 	}
+	if *out != "" && *split {
+		fmt.Fprintln(stderr, "error: -split writes multiple files; use -outdir, not -o")
+		return 2
+	}
+	if *out != "" && *outdir != "" {
+		fmt.Fprintln(stderr, "error: use either -o or -outdir, not both")
+		return 2
+	}
 
-	// A directory input generates one file per schema.
+	// A directory input merges every schema into one namespace.
 	if path := fs.Arg(0); path != "" {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -59,7 +69,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if info.IsDir() {
-			return runDir(path, *pkg, *outdir, stderr)
+			return runDir(path, *pkg, *outdir, *split, stderr)
 		}
 	}
 
@@ -69,12 +79,26 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// -split writes one file per type into the output directory.
+	if *split {
+		files, err := gen.GenerateAutoFiles(data, *pkg, typeName)
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %v\n", err)
+			return 1
+		}
+		return writeFiles(files, resolveOutdir(*outdir, fs.Arg(0)), stderr)
+	}
+
 	src, err := gen.GenerateAuto(data, *pkg, typeName)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
+	// -outdir writes the combined file as <pkg>.go into the directory.
+	if *outdir != "" {
+		return writeFiles(map[string][]byte{*pkg + ".go": src}, *outdir, stderr)
+	}
 	if *out == "" {
 		if _, err := stdout.Write(src); err != nil {
 			fmt.Fprintf(stderr, "error: %v\n", err)
@@ -89,16 +113,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runDir generates one combined Go file from every *.json/*.yaml schema in dir, into
-// outdir (defaulting to dir) as <pkg>.go. The schemas share one namespace: types
-// are deduplicated by name and $ref resolves across files.
-func runDir(dir, pkg, outdir string, stderr io.Writer) int {
+// runDir generates from every *.json/*.yaml schema in dir, into outdir (defaulting
+// to dir): one combined <pkg>.go, or one file per type with split. The schemas
+// share one namespace: types are deduplicated by name and $ref resolves across files.
+func runDir(dir, pkg, outdir string, split bool, stderr io.Writer) int {
 	if outdir == "" {
 		outdir = dir
-	}
-	if err := os.MkdirAll(outdir, 0o755); err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
-		return 1
 	}
 
 	entries, err := os.ReadDir(dir)
@@ -124,18 +144,51 @@ func runDir(dir, pkg, outdir string, stderr io.Writer) int {
 		return 1
 	}
 
+	if split {
+		out, err := gen.GenerateDirFiles(files, pkg)
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %v\n", err)
+			return 1
+		}
+		return writeFiles(out, outdir, stderr)
+	}
+
 	src, err := gen.GenerateDir(files, pkg)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
+	return writeFiles(map[string][]byte{pkg + ".go": src}, outdir, stderr)
+}
 
-	outPath := filepath.Join(outdir, pkg+".go")
-	if err := os.WriteFile(outPath, src, 0o644); err != nil {
-		fmt.Fprintf(stderr, "error: writing %s: %v\n", outPath, err)
+// writeFiles writes each name->source into dir, creating dir if missing.
+func writeFiles(files map[string][]byte, dir string, stderr io.Writer) int {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
+	for name, src := range files {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, src, 0o644); err != nil {
+			fmt.Fprintf(stderr, "error: writing %s: %v\n", p, err)
+			return 1
+		}
+	}
 	return 0
+}
+
+// resolveOutdir is the output directory for a single-schema input: the -outdir
+// flag when set, else the input file's directory, else the current directory
+// (stdin has no path).
+func resolveOutdir(outdir, path string) string {
+	switch {
+	case outdir != "":
+		return outdir
+	case path != "":
+		return filepath.Dir(path)
+	default:
+		return "."
+	}
 }
 
 // readSchema loads the schema from path (or stdin when path is empty) and resolves

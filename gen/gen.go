@@ -19,21 +19,33 @@ import (
 // Generate turns a JSON Schema document into a Go source file. pkg is the output
 // package name and name is the Go type name for the root object.
 func Generate(data []byte, pkg, name string) ([]byte, error) {
-	root, err := schema.Parse(data)
-	if err != nil {
-		return nil, err
-	}
-	file, err := ir.Build(pkg, name, root)
+	file, err := buildSchema(data, pkg, name)
 	if err != nil {
 		return nil, err
 	}
 	return emit.File(file)
 }
 
+func buildSchema(data []byte, pkg, name string) (*ir.File, error) {
+	root, err := schema.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return ir.Build(pkg, name, root)
+}
+
 // GenerateOpenAPI turns an OpenAPI 3.1 document into a Go source file, generating
 // a type for every schema under components.schemas (their 2020-12 dialect and
 // #/components/schemas/ refs flow through the same pipeline).
 func GenerateOpenAPI(data []byte, pkg string) ([]byte, error) {
+	file, err := buildOpenAPI(data, pkg)
+	if err != nil {
+		return nil, err
+	}
+	return emit.File(file)
+}
+
+func buildOpenAPI(data []byte, pkg string) (*ir.File, error) {
 	doc, err := schema.ParseOpenAPI(data)
 	if err != nil {
 		return nil, err
@@ -41,20 +53,34 @@ func GenerateOpenAPI(data []byte, pkg string) ([]byte, error) {
 	if len(doc.Components.Schemas) == 0 {
 		return nil, fmt.Errorf("no components.schemas in the OpenAPI document")
 	}
-	file, err := ir.BuildAll(pkg, doc.Components.Schemas)
+	return ir.BuildAll(pkg, doc.Components.Schemas)
+}
+
+// GenerateAuto detects the input: an OpenAPI document generates all its component
+// schemas (name is ignored); a bare JSON Schema generates the single named root.
+func GenerateAuto(data []byte, pkg, name string) ([]byte, error) {
+	file, err := buildAuto(data, pkg, name)
 	if err != nil {
 		return nil, err
 	}
 	return emit.File(file)
 }
 
-// GenerateAuto detects the input: an OpenAPI document generates all its component
-// schemas (name is ignored); a bare JSON Schema generates the single named root.
-func GenerateAuto(data []byte, pkg, name string) ([]byte, error) {
-	if schema.IsOpenAPI(data) {
-		return GenerateOpenAPI(data, pkg)
+// GenerateAutoFiles is like GenerateAuto but emits one source file per generated
+// type, keyed by a snake_case filename (e.g. "asset_response.go").
+func GenerateAutoFiles(data []byte, pkg, name string) (map[string][]byte, error) {
+	file, err := buildAuto(data, pkg, name)
+	if err != nil {
+		return nil, err
 	}
-	return Generate(data, pkg, name)
+	return emit.Files(file)
+}
+
+func buildAuto(data []byte, pkg, name string) (*ir.File, error) {
+	if schema.IsOpenAPI(data) {
+		return buildOpenAPI(data, pkg)
+	}
+	return buildSchema(data, pkg, name)
 }
 
 // GenerateDir generates one Go source file from a set of schema files (filename →
@@ -63,6 +89,24 @@ func GenerateAuto(data []byte, pkg, name string) ([]byte, error) {
 // document contributes its components.schemas. Types are deduplicated by name and
 // $ref resolves across files (e.g. "common.json#/$defs/Address").
 func GenerateDir(files map[string][]byte, pkg string) ([]byte, error) {
+	file, err := buildDir(files, pkg)
+	if err != nil {
+		return nil, err
+	}
+	return emit.File(file)
+}
+
+// GenerateDirFiles is like GenerateDir but emits one source file per generated
+// type, keyed by a snake_case filename (e.g. "address.go").
+func GenerateDirFiles(files map[string][]byte, pkg string) (map[string][]byte, error) {
+	file, err := buildDir(files, pkg)
+	if err != nil {
+		return nil, err
+	}
+	return emit.Files(file)
+}
+
+func buildDir(files map[string][]byte, pkg string) (*ir.File, error) {
 	merged := map[string]*schema.Schema{}
 
 	names := make([]string, 0, len(files))
@@ -100,7 +144,7 @@ func GenerateDir(files map[string][]byte, pkg string) ([]byte, error) {
 	if len(file.Messages) == 0 {
 		return nil, fmt.Errorf("no object schemas found in the directory")
 	}
-	return emit.File(file)
+	return file, nil
 }
 
 // fileBase strips a schema filename to its base name, e.g. "person.schema.json",

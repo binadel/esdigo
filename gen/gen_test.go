@@ -2,6 +2,7 @@ package gen
 
 import (
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -138,6 +139,83 @@ properties:
 	if n := strings.Count(got, "type Address struct"); n != 1 {
 		t.Errorf("shared Address should be generated once, got %d", n)
 	}
+}
+
+// TestGenerateAutoFiles: split output puts each type in its own snake_case file,
+// carrying only the imports its own message uses (a file with no time field must
+// not import "time").
+func TestGenerateAutoFiles(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"when":{"type":"string","format":"date-time"},
+		"inner":{"type":"object","properties":{"x":{"type":"string"}}}
+	}}`
+	files, err := GenerateAutoFiles([]byte(s), "m", "Root")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	root, ok := files["root.go"]
+	if !ok {
+		t.Fatalf("missing root.go; got files %v", keys(files))
+	}
+	inner, ok := files["root_inner.go"]
+	if !ok {
+		t.Fatalf("missing root_inner.go; got files %v", keys(files))
+	}
+
+	if !strings.Contains(string(root), "type Root struct") {
+		t.Errorf("root.go missing type Root:\n%s", root)
+	}
+	if !strings.Contains(string(inner), "type RootInner struct") {
+		t.Errorf("root_inner.go missing type RootInner:\n%s", inner)
+	}
+	// import scoping: only root.go has the date-time field
+	if !strings.Contains(string(root), `"time"`) {
+		t.Errorf("root.go should import time:\n%s", root)
+	}
+	if strings.Contains(string(inner), `"time"`) {
+		t.Errorf("root_inner.go should not import time:\n%s", inner)
+	}
+	// each file is a standalone source with the header and package clause
+	for name, src := range files {
+		if !strings.Contains(string(src), "package m") {
+			t.Errorf("%s missing package clause", name)
+		}
+		if !strings.Contains(string(src), "DO NOT EDIT") {
+			t.Errorf("%s missing generated header", name)
+		}
+	}
+}
+
+// TestGenerateDirFiles: split output over a directory dedups a shared type into one
+// file and resolves cross-file $refs.
+func TestGenerateDirFiles(t *testing.T) {
+	files := map[string][]byte{
+		"a.schema.json": []byte(`{"type":"object","properties":{"addr":{"$ref":"common.json#/$defs/Address"}}}`),
+		"b.schema.json": []byte(`{"type":"object","properties":{"addr":{"$ref":"common.json#/$defs/Address"}}}`),
+		"common.json":   []byte(`{"$defs":{"Address":{"type":"object","properties":{"city":{"type":"string"}}}}}`),
+	}
+	out, err := GenerateDirFiles(files, "models")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	for _, name := range []string{"a.go", "b.go", "address.go"} {
+		if _, ok := out[name]; !ok {
+			t.Errorf("missing %s; got %v", name, keys(out))
+		}
+	}
+	if !strings.Contains(string(out["address.go"]), "type Address struct") {
+		t.Errorf("address.go missing type Address:\n%s", out["address.go"])
+	}
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the

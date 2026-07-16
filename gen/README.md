@@ -25,11 +25,15 @@ go run github.com/binadel/esdigo/gen/cmd/esdigo-gen [flags] <schema.json>
 |---|---|
 | `esdigo-gen -pkg models schema.json` | one schema → stdout (or `-o out.go`) |
 | `esdigo-gen -pkg models < schema.json` | read from stdin |
+| `esdigo-gen -pkg models -outdir ./m schema.json` | combined `<pkg>.go` in a directory |
+| `esdigo-gen -pkg models -split -outdir ./m schema.json` | one file per type (`asset_response.go`, …) |
 | `esdigo-gen -pkg models ./schemas` | a directory → one combined `<pkg>.go` |
 
 Flags: `-pkg` (output package, default `models`), `-name` (root type name; default
-derived from the filename), `-o` (single-file output, default stdout), `-outdir`
-(directory-mode output, default the input directory).
+derived from the filename), `-o` (combined single-file output, default stdout),
+`-outdir` (output directory; writes `<pkg>.go` there, created if missing),
+`-split` (write one `<type>.go` per generated type into `-outdir`). `-split` and
+`-outdir` work for a single schema, a directory, or stdin.
 
 Input may be **JSON or YAML** — the format is detected automatically, so OpenAPI
 specs (usually YAML) work directly (`esdigo-gen -pkg models openapi.yaml`); in a
@@ -47,6 +51,10 @@ src, err := gen.Generate(schemaBytes, "models", "User")   // one JSON Schema
 src, err := gen.GenerateOpenAPI(docBytes, "models")       // all components.schemas
 src, err := gen.GenerateDir(files, "models")              // map[filename]bytes → one file
 src, err := gen.GenerateAuto(data, "models", "User")      // detect schema vs OpenAPI
+
+// Split variants return map[filename]bytes — one source file per generated type:
+byFile, err := gen.GenerateAutoFiles(data, "models", "User")
+byFile, err := gen.GenerateDirFiles(files, "models")
 ```
 
 ## Example

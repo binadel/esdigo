@@ -23,9 +23,10 @@ type File struct {
 
 // Message is one generated struct (and its validator).
 type Message struct {
-	Name   string
-	Doc    string
-	Fields []*Field
+	Name    string
+	Doc     string
+	Fields  []*Field
+	Imports []string // the import set when this message is emitted in its own file
 }
 
 // Field is one property of a Message.
@@ -127,13 +128,7 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 		}
 	}
 
-	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
-
-	return &File{
-		Package:  pkg,
-		Imports:  buildImports(b.imports),
-		Messages: b.messages,
-	}, nil
+	return b.file(pkg), nil
 }
 
 // BuildAll resolves a set of named schemas (e.g. OpenAPI components) into a
@@ -154,13 +149,22 @@ func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 		}
 	}
 
-	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
+	return b.file(pkg), nil
+}
 
+// file assembles the generated File: messages sorted by name (Go allows forward
+// references), the aggregate import set for the combined output, and each
+// message's own import set for per-file (split) output.
+func (b *builder) file(pkg string) *File {
+	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
+	for _, m := range b.messages {
+		m.Imports = messageImports(m)
+	}
 	return &File{
 		Package:  pkg,
 		Imports:  buildImports(b.imports),
 		Messages: b.messages,
-	}, nil
+	}
 }
 
 // buildMessage produces the message named goName for object schema s (once).
@@ -576,6 +580,36 @@ func buildImports(extra map[string]bool) []string {
 	set := map[string]bool{
 		"github.com/binadel/esdigo/json":       true,
 		"github.com/binadel/esdigo/json/types": true,
+		"github.com/binadel/esdigo/validation": true,
+	}
+	for imp := range extra {
+		set[imp] = true
+	}
+	list := make([]string, 0, len(set))
+	for imp := range set {
+		list = append(list, imp)
+	}
+	sort.Strings(list)
+	return list
+}
+
+// messageImports is the import set for a single message emitted on its own file.
+// json (marshal/read) and validation (the validator + object-level Result) are
+// always used; types only when the struct has fields (its wrappers, incl.
+// types.Object for nested refs); plus each field's result-type imports. References
+// to sibling types live in the same package, so they need no import.
+func messageImports(m *Message) []string {
+	extra := map[string]bool{}
+	if len(m.Fields) > 0 {
+		extra["github.com/binadel/esdigo/json/types"] = true
+	}
+	for _, f := range m.Fields {
+		for _, imp := range f.Imports {
+			extra[imp] = true
+		}
+	}
+	set := map[string]bool{
+		"github.com/binadel/esdigo/json":       true,
 		"github.com/binadel/esdigo/validation": true,
 	}
 	for imp := range extra {
