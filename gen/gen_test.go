@@ -724,6 +724,34 @@ func TestGenerateMinMaxProperties(t *testing.T) {
 	}
 }
 
+// TestGenerateNullableOptionalObjectArray: an optional, nullable, otherwise
+// unconstrained array of objects (or constrained scalars) still validates per
+// element — the array field must not be skipped (which would drop element
+// validation and leave an unused strconv import that fails to compile).
+func TestGenerateNullableOptionalObjectArray(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"tags":{"type":["array","null"],"items":{"$ref":"#/$defs/Tag"}},
+		"names":{"type":["array","null"],"items":{"type":"string","minLength":1}}
+	},"$defs":{"Tag":{"type":"object","properties":{"k":{"type":"string"}}}}}`
+	out, err := Generate([]byte(s), "m", "Doc")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	// Assert on statement-level lines (not struct fields, which gofmt aligns): the
+	// per-element loops append into the Items slices, and strconv is used — so the
+	// file compiles and elements are validated.
+	for _, want := range []string{
+		"out.TagsItems = append(out.TagsItems, NewTagValidator(p...).Validate(elem))",
+		"out.NamesItems = append(out.NamesItems, validation.NewString(p...)",
+		"strconv.Itoa(i)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestGenerateNoPropertyCount: an object without min/maxProperties gets no
 // property-count machinery, keeping plain objects byte-identical to before.
 func TestGenerateNoPropertyCount(t *testing.T) {

@@ -13,6 +13,11 @@ and its validator maps a decoded value to a typed, path-aware result.
   aggregate `IsValid()`, and `Failures()` — a flat list of failing fields, each
   carrying its full path and error codes.
 
+> Writing a schema (by hand or with an LLM) to feed the generator? Read
+> **[Authoring schemas — capability contract](#authoring-schemas--capability-contract)**
+> first: it is the complete, self-contained list of what esdigo supports and what is
+> a generation error.
+
 ## CLI
 
 The `esdigo-gen` command lives at `gen/cmd/esdigo-gen`:
@@ -101,6 +106,112 @@ if !r.IsValid() {
 
 r.Email.Value        // *mail.Address — the parsed, typed value
 r.Address.City.Value // "…" — reached through the nested result
+```
+
+## Authoring schemas — capability contract
+
+This section is the **complete** set of what esdigo can generate. If you author an
+OpenAPI 3.1 document (by hand or with an LLM), stay inside it and every type will
+generate and compile. Anything marked *error* fails generation with a clear message;
+anything marked *ignored* is silently skipped.
+
+**Where types come from.** esdigo reads only **`components.schemas`** (OpenAPI) or the
+root schema plus **`$defs`** (JSON Schema). **`paths`, `parameters`, `requestBodies`,
+`responses`, `headers`, and everything else are ignored** — put every type you want
+generated under `components.schemas`, and reference them with `$ref`
+(`#/components/schemas/Name`). Define all schemas explicitly.
+
+**What becomes a Go type.** A component generates a named Go type only if it is an
+**`object`** (with at least one property), an **`allOf`** composition, or a
+**discriminated `oneOf`/`anyOf`**. A component that is a bare scalar, enum, or array is
+*not* a standalone type — it is inlined wherever it is `$ref`'d (so a shared
+`{type: string, format: email}` or `{type: string, enum: [...]}` component works as a
+referenced property type, but an unreferenced one generates nothing).
+
+**Objects are closed.** esdigo has no `additionalProperties` / free-form map support.
+List every property explicitly; a property-less object is an **error** (it would
+silently drop data).
+
+### Supported
+
+- **Property/value types:** `string`, `integer`, `number`, `boolean`, `object`
+  (inline or `$ref`), `array`, and a discriminated `oneOf`/`anyOf`.
+- **`$ref`** to any component (`#/components/schemas/Name`) — objects/unions are shared
+  references; scalars/arrays are inlined.
+- **`allOf`** — flattened: subschemas' `properties`/`required` merge into one struct
+  (models object inheritance). Recursive.
+- **`oneOf` / `anyOf`** — only with a **`discriminator`** (see [Unions](#unions-oneof--anyof)).
+  Also the `[X, null]` idiom → nullable `X`.
+- **Nullability** — `type: ["string","null"]` (3.1) or `nullable: true` (3.0).
+- **Direction** — `x-esdigo-io: in | out | both` (default `both`); see
+  [Direction](#direction-inbound--outbound).
+- **String `format`:** `email`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `uuid`, `date`,
+  `time`, `date-time`, `duration`, `regex`, `hostname`, `json-pointer`.
+- **Numeric `format`** (else `integer`→int64, `number`→float64): `int`, `int8`, `int16`,
+  `int32`, `int64`, `uint`, `uint8`, `uint16`, `uint32`, `uint64`, `float`/`float32`,
+  `double`/`float64`, `bigint`/`biginteger`, `decimal`/`bigfloat`/`bignumber`,
+  `raw`/`rawnumber`.
+- **Constraints** — string: `minLength`, `maxLength`, `pattern`, `enum`, `const`;
+  number/integer: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+  `multipleOf`, `enum`, `const`; boolean: `const`; array: `minItems`, `maxItems`,
+  `uniqueItems`; object: `required`, `minProperties`, `maxProperties`.
+- **Arrays** of any supported element (scalars, objects, unions), including nested
+  objects/unions validated per element.
+
+### Errors — avoid these (generation fails)
+
+- An `object` with **no `properties`** (after `allOf` merge), or reliance on
+  **`additionalProperties`/maps** — objects are closed; enumerate properties.
+- **`oneOf`/`anyOf` without a `discriminator`** (and not the `[X, null]` idiom).
+- **`if`/`then`/`else`** or **`not`**.
+- **Nested arrays** — an `array` whose `items` is itself an `array`.
+- **`bigint`/`decimal`/`raw` numbers as array elements.**
+- A **`raw`/`rawnumber`** field with any numeric constraint (`minimum`/`enum`/… ) — raw
+  fields honor only presence (`required`) and nullability.
+- An `integer` `minimum`/`maximum`/`enum`/`const` that **doesn't fit the chosen width**
+  (out of range, or negative on an unsigned type), or a non-integer bound.
+- Two **different** types that share a name (across merged files/components).
+
+### Ignored (accepted, no effect)
+
+- An unknown string `format` (treated as an annotation).
+- Any keyword not listed above, and everything outside `components.schemas`.
+
+### Minimal OpenAPI example
+
+```yaml
+openapi: 3.1.0
+info: { title: Pets, version: 1.0.0 }
+paths: {}                                   # ignored — types come from components
+components:
+  schemas:
+    Pet:                                    # discriminated union → tagged Go type
+      oneOf:
+        - $ref: '#/components/schemas/Cat'
+        - $ref: '#/components/schemas/Dog'
+      discriminator:
+        propertyName: kind
+    Cat:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:  { type: string, const: Cat }
+        name:  { type: string, minLength: 1 }
+        lives: { type: integer, format: int32, minimum: 1, maximum: 9 }
+    Dog:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { type: string, const: Dog }
+        name: { type: string, minLength: 1 }
+    Owner:
+      type: object
+      x-esdigo-io: in                       # request type: reader + validators, no writer
+      required: [id, pets]
+      properties:
+        id:    { type: string, format: uuid }
+        email: { type: ["string", "null"], format: email }   # nullable
+        pets:  { type: array, minItems: 1, items: { $ref: '#/components/schemas/Pet' } }
 ```
 
 ## Type mapping

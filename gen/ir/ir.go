@@ -573,7 +573,13 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 	}
 
 	f.ModelType = fmt.Sprintf("types.Array[%s, *%s]", elem, elem)
-	f.Validate = required || notNull || hasArrayConstraint(s)
+	// An object/union element, or a scalar element with its own constraints, means the
+	// array validates per element — so the field must validate even when the array
+	// itself is optional/nullable and otherwise unconstrained. Otherwise emit would
+	// skip the field (its per-element loop and results) while still importing strconv
+	// for it, producing code that drops element validation and fails to compile.
+	elemValidates := elemIsObject || hasValueConstraint(elemSchema)
+	f.Validate = required || notNull || hasArrayConstraint(s) || elemValidates
 	if f.Validate {
 		f.ValidatorType = fmt.Sprintf("*validation.Array[%s, *%s]", elem, elem)
 		f.ResultType = fmt.Sprintf("[]*%s", elem)
