@@ -64,6 +64,31 @@ func TestReadRawValue(t *testing.T) {
 	}
 }
 
+// FuzzReadRawValue checks the core invariant of ReadRawValue on arbitrary input:
+// whatever bytes it captures form exactly one JSON value — a fresh reader reads a
+// value from them and consumes all of it (ReadJSON rejects trailing bytes). It must
+// never panic. This backs discriminated-union decoding, which re-parses the captured
+// bytes into the chosen variant.
+func FuzzReadRawValue(f *testing.F) {
+	for _, s := range []string{
+		"{}", `{"a":1}`, "[1,2,3]", `"x"`, "123", "-0.5e2", "true", "false", "null",
+		"  {}  ", `{"k":"}"}`, `["\"]"]`, "[[[]]]", `{"a":{"b":[1,{"c":2}]}}`,
+		"", " ", "{", "]", `"unterminated`, `{"a":1} trailing`, "1e999999", "\x00",
+	} {
+		f.Add([]byte(s))
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		raw, ok := NewReader(data).ReadRawValue()
+		if !ok {
+			return
+		}
+		if _, err := NewReader(raw).ReadJSON(); err != nil {
+			t.Fatalf("ReadRawValue captured %q which does not re-parse as one value: %v", raw, err)
+		}
+	})
+}
+
 func TestWriteValue_RoundTrip_Cases(t *testing.T) {
 	cases := []string{
 		`null`, `true`, `false`,
