@@ -570,6 +570,25 @@ func TestGenerateAllOfUnresolvedRef(t *testing.T) {
 	}
 }
 
+// TestGenerateUnsupportedComposition: composition keywords the generator does not
+// model (oneOf/anyOf/if-then-else/not) are a clear generation error rather than a
+// struct that silently ignores the constraint — whether on a field or the root.
+func TestGenerateUnsupportedComposition(t *testing.T) {
+	cases := map[string]string{
+		"oneOf field": `{"type":"object","properties":{"x":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}`,
+		"anyOf field": `{"type":"object","properties":{"x":{"anyOf":[{"type":"string"},{"type":"integer"}]}}}`,
+		"not field":   `{"type":"object","properties":{"x":{"not":{"type":"string"}}}}`,
+		"if root":     `{"type":"object","if":{"properties":{"t":{"const":"a"}}},"then":{"required":["a"]},"properties":{"t":{"type":"string"},"a":{"type":"string"}}}`,
+		"oneOf root":  `{"oneOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"string"}}}]}`,
+		"oneOf def":   `{"type":"object","properties":{"x":{"$ref":"#/$defs/U"}},"$defs":{"U":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}`,
+	}
+	for name, s := range cases {
+		if _, err := Generate([]byte(s), "m", "T"); err == nil {
+			t.Errorf("%s: expected an error for unsupported composition", name)
+		}
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {
@@ -699,6 +718,53 @@ func TestGenerateNullable30(t *testing.T) {
 func TestGenerateRejectsNonObjectRoot(t *testing.T) {
 	if _, err := Generate([]byte(`{"type":"string"}`), "example", "X"); err == nil {
 		t.Errorf("expected error for non-object root")
+	}
+}
+
+// TestGenerateEmptyObjectErrors: a property-less object would generate a struct that
+// silently drops all data, so it is an error — at the root and when nested.
+func TestGenerateEmptyObjectErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object"}`), "m", "T"); err == nil {
+		t.Errorf("a property-less root object should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"meta":{"type":"object"}}}`), "m", "T"); err == nil {
+		t.Errorf("a property-less nested object should error")
+	}
+}
+
+// TestGenerateGoNameCollision: two $defs whose names normalize to the same Go type
+// name are a conflict when they differ (they would silently overwrite).
+func TestGenerateGoNameCollision(t *testing.T) {
+	s := `{"type":"object","properties":{"x":{"type":"string"}},"$defs":{
+		"user_id":{"type":"object","properties":{"a":{"type":"string"}}},
+		"userId":{"type":"object","properties":{"b":{"type":"integer"}}}
+	}}`
+	if _, err := Generate([]byte(s), "m", "T"); err == nil {
+		t.Errorf("differing schemas that share a Go name should error")
+	}
+}
+
+// TestGenerateDirConflict: two files defining a different type under the same name are
+// a conflict, but identical definitions still dedup.
+func TestGenerateDirConflict(t *testing.T) {
+	conflict := map[string][]byte{
+		"a.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"a":{"type":"string"}}}}}`),
+		"b.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"b":{"type":"integer"}}}}}`),
+	}
+	if _, err := GenerateDir(conflict, "m"); err == nil {
+		t.Errorf("conflicting same-named types across files should error")
+	}
+
+	same := map[string][]byte{
+		"a.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"a":{"type":"string"}}}}}`),
+		"b.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"a":{"type":"string"}}}}}`),
+	}
+	out, err := GenerateDir(same, "m")
+	if err != nil {
+		t.Fatalf("identical same-named types should dedup, not error: %v", err)
+	}
+	if n := strings.Count(string(out), "type Thing struct"); n != 1 {
+		t.Errorf("identical Thing should be generated once, got %d", n)
 	}
 }
 

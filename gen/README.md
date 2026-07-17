@@ -222,16 +222,22 @@ Asset:
         name: { type: string, minLength: 1 }
 ```
 
-Merging is recursive (a base may itself be an `allOf`). `oneOf` / `anyOf` /
-`if`-`then`-`else` are not handled.
+Merging is recursive (a base may itself be an `allOf`). The other composition
+keywords — `oneOf`, `anyOf`, `if`-`then`-`else`, and `not` — are a **generation
+error**, not silently ignored, so a schema is never compiled into a struct that
+quietly drops the constraint.
 
 ## Notes and limitations
 
 - Array **element** failures carry their index in the path, e.g.
   `["tags", "0"]`; the flat report is built from failing `validation.FieldResult`
   values (the path lives on the result, not the error).
-- Directory mode deduplicates types by **name** — two different types with the
-  same name silently collapse (last wins).
-- Not yet handled: `oneOf`/`anyOf`/`if`-`then`-`else`, `minProperties`/`maxProperties`,
-  `dependentRequired`, nested arrays (`array` of `array`), big-number array elements,
-  and OpenAPI `paths` request/response bodies (only `components.schemas` is extracted).
+- A property-less `object` is a **generation error** — a closed struct with no
+  fields would silently drop all data (`additionalProperties`/maps are unsupported).
+- Directory mode deduplicates types by **name**: identical definitions merge, but two
+  *differing* types that share a name (or Go type name) are a conflict error.
+- Composition beyond `allOf` — `oneOf`, `anyOf`, `if`-`then`-`else`, `not` — is a
+  **generation error** rather than silently ignored; support is planned.
+- Not yet handled: `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
+  (`array` of `array`), big-number array elements, and OpenAPI `paths` request/response
+  bodies (only `components.schemas` is extracted).

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -148,10 +149,11 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 		return nil, fmt.Errorf("root schema must be an object, got %q", root.Type.Primary())
 	}
 
-	b := &builder{
-		defs:  normalizeDefs(root.AllDefs()),
-		built: map[string]bool{},
+	defs, err := normalizeDefs(root.AllDefs())
+	if err != nil {
+		return nil, err
 	}
+	b := &builder{defs: defs, built: map[string]bool{}}
 
 	dir, err := directionOf(root)
 	if err != nil {
@@ -163,6 +165,9 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	// Emit every object definition too, referenced or not.
 	for _, key := range sortedKeys(b.defs) {
 		s := b.defs[key]
+		if err := checkComposition(key, s); err != nil {
+			return nil, err
+		}
 		if !isObjectSchema(s) {
 			continue
 		}
@@ -182,13 +187,17 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 // generated file: a message for every object schema, with $ref resolved against
 // the whole set. Non-object schemas become messages only where a ref inlines them.
 func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
-	b := &builder{
-		defs:  normalizeDefs(schemas),
-		built: map[string]bool{},
+	defs, err := normalizeDefs(schemas)
+	if err != nil {
+		return nil, err
 	}
+	b := &builder{defs: defs, built: map[string]bool{}}
 
 	for _, key := range sortedKeys(b.defs) {
 		s := b.defs[key]
+		if err := checkComposition(key, s); err != nil {
+			return nil, err
+		}
 		if !isObjectSchema(s) {
 			continue
 		}
@@ -230,6 +239,24 @@ func isObjectSchema(s *schema.Schema) bool {
 		return true
 	}
 	return s.Type.Primary() == "" && len(s.AllOf) > 0
+}
+
+// checkComposition rejects the composition keywords the generator does not yet
+// model, so an unsupported oneOf/anyOf/if/not is a clear generation error instead
+// of being silently dropped (which would emit a struct that ignores the
+// constraint). allOf is handled by mergedObject and is intentionally not listed.
+func checkComposition(name string, s *schema.Schema) error {
+	switch {
+	case len(s.OneOf) > 0:
+		return fmt.Errorf("schema %q uses oneOf, which is not yet supported", name)
+	case len(s.AnyOf) > 0:
+		return fmt.Errorf("schema %q uses anyOf, which is not yet supported", name)
+	case s.Not != nil:
+		return fmt.Errorf("schema %q uses not, which is not supported", name)
+	case s.If != nil:
+		return fmt.Errorf("schema %q uses if/then/else, which is not yet supported", name)
+	}
+	return nil
 }
 
 // mergedObject flattens an object schema's effective properties and required set,
@@ -284,9 +311,16 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 	}
 	b.built[name] = true
 
+	if err := checkComposition(name, s); err != nil {
+		return err
+	}
+
 	props, required, err := b.mergedObject(s)
 	if err != nil {
 		return err
+	}
+	if len(props) == 0 {
+		return fmt.Errorf("object type %q has no properties; a generated struct would silently drop all data (additionalProperties/maps are not supported)", name)
 	}
 
 	msg := &Message{Name: name, Doc: doc(s), Direction: dir}
@@ -306,6 +340,9 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
 	if s.Ref != "" {
 		return b.buildRefField(msgName, jsonName, s, required, dir)
+	}
+	if err := checkComposition(jsonName, s); err != nil {
+		return nil, err
 	}
 	if isObjectSchema(s) {
 		child := msgName + goName(jsonName)
@@ -627,15 +664,26 @@ func refName(ref string) string {
 // normalizeDefs re-keys a schema set by Go type name, so $ref resolution and
 // generation agree regardless of how names were spelled in the schema (and so
 // same-named types across merged files deduplicate). Deterministic on collisions.
-func normalizeDefs(defs map[string]*schema.Schema) map[string]*schema.Schema {
+func normalizeDefs(defs map[string]*schema.Schema) (map[string]*schema.Schema, error) {
 	if len(defs) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string]*schema.Schema, len(defs))
+	origin := make(map[string]string, len(defs)) // Go name -> the source key that claimed it
 	for _, k := range sortedKeys(defs) {
-		out[goName(k)] = defs[k]
+		name := goName(k)
+		if prev, taken := origin[name]; taken {
+			// Same Go name from two source keys: fine if identical (a shared type),
+			// a conflict if they differ (one would silently overwrite the other).
+			if !reflect.DeepEqual(out[name], defs[k]) {
+				return nil, fmt.Errorf("schemas %q and %q both map to the Go type name %q but differ", prev, k, name)
+			}
+			continue
+		}
+		origin[name] = k
+		out[name] = defs[k]
 	}
-	return out
+	return out, nil
 }
 
 func hasValueConstraint(s *schema.Schema) bool {

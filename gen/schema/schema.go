@@ -57,6 +57,17 @@ type Schema struct {
 	// this one (JSON Schema intersection; OpenAPI uses it for object inheritance).
 	AllOf []*Schema `json:"allOf"`
 
+	// other composition keywords. oneOf/anyOf are unions, if/then/else is
+	// conditional, and not is negation. They are parsed so the generator can reject
+	// the ones it does not yet model with a clear error, rather than silently
+	// dropping the constraint and emitting a struct that ignores it.
+	OneOf []*Schema `json:"oneOf"`
+	AnyOf []*Schema `json:"anyOf"`
+	Not   *Schema   `json:"not"`
+	If    *Schema   `json:"if"`
+	Then  *Schema   `json:"then"`
+	Else  *Schema   `json:"else"`
+
 	// named subschemas: "$defs" (2020-12 / OpenAPI 3.1) or "definitions" (draft-07)
 	Defs        map[string]*Schema `json:"$defs"`
 	Definitions map[string]*Schema `json:"definitions"`
