@@ -50,8 +50,10 @@ type Schema struct {
 	Ref string `json:"$ref"`
 
 	// object
-	Properties map[string]*Schema `json:"properties"`
-	Required   []string           `json:"required"`
+	Properties    map[string]*Schema `json:"properties"`
+	Required      []string           `json:"required"`
+	MinProperties *int               `json:"minProperties"`
+	MaxProperties *int               `json:"maxProperties"`
 
 	// composition: allOf merges every subschema's properties and required list into
 	// this one (JSON Schema intersection; OpenAPI uses it for object inheritance).

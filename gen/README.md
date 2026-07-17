@@ -168,7 +168,7 @@ Emitted onto the field validators:
   `multipleOf`, `enum`, `const`
 - **boolean**: `const`
 - **array**: `minItems`, `maxItems`, `uniqueItems`
-- **object**: `required` (per property)
+- **object**: `required` (per property), `minProperties`, `maxProperties`
 
 ## Presence and nullability
 
@@ -272,6 +272,8 @@ bare `X`.
 - A `oneOf`/`anyOf` needs a `discriminator` (or must be the `[X, null]` idiom);
   `if`-`then`-`else` and `not` are a **generation error** rather than silently ignored.
   A union is usable as an array element (validated per element, like an object).
-- Not yet handled: `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
-  (`array` of `array`), big-number array elements, and OpenAPI `paths` request/response
-  bodies (only `components.schemas` is extracted).
+- `minProperties`/`maxProperties` count the **declared** properties present (esdigo
+  objects are closed structs), reported at the object's own path.
+- Not yet handled: `dependentRequired`, nested arrays (`array` of `array`), big-number
+  array elements, and OpenAPI `paths` request/response bodies (only `components.schemas`
+  is extracted).

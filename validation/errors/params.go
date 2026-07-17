@@ -15,6 +15,8 @@ const (
 	ParamKeyExactItems       = `,"exactItems":`
 	ParamKeyMinItems         = `,"minItems":`
 	ParamKeyMaxItems         = `,"maxItems":`
+	ParamKeyMinProperties    = `,"minProperties":`
+	ParamKeyMaxProperties    = `,"maxProperties":`
 	ParamKeyEnum             = `,"enum":`
 	ParamKeyConst            = `,"const":`
 	ParamKeyVersion          = `,"version":`

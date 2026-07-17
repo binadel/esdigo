@@ -32,6 +32,8 @@ const (
 	ExactItems       Code = "EXACT_ITEMS"
 	MinItems         Code = "MIN_ITEMS"
 	MaxItems         Code = "MAX_ITEMS"
+	MinProperties    Code = "MIN_PROPERTIES"
+	MaxProperties    Code = "MAX_PROPERTIES"
 	Minimum          Code = "MINIMUM"
 	Maximum          Code = "MAXIMUM"
 	ExclusiveMinimum Code = "EXCLUSIVE_MINIMUM"

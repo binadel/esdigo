@@ -143,6 +143,16 @@ var (
 		Message: "value must contain at most the maximum number of items",
 	}
 
+	MinProperties = BasicError{
+		Code:    rules.MinProperties,
+		Message: "object must have at least the minimum number of properties",
+	}
+
+	MaxProperties = BasicError{
+		Code:    rules.MaxProperties,
+		Message: "object must have at most the maximum number of properties",
+	}
+
 	Minimum = BasicError{
 		Code:    rules.Minimum,
 		Message: "value must be at least the minimum",

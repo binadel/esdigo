@@ -701,6 +701,41 @@ func TestGenerateNullableIdiom(t *testing.T) {
 	}
 }
 
+// TestGenerateMinMaxProperties: minProperties/maxProperties add an object-level
+// property-count check that counts the present fields.
+func TestGenerateMinMaxProperties(t *testing.T) {
+	s := `{"type":"object","minProperties":1,"maxProperties":2,"properties":{"a":{"type":"string"},"b":{"type":"string"}}}`
+	out, err := Generate([]byte(s), "m", "Bag")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"Properties validation.Result[int]",
+		"properties *validation.Properties",
+		"validation.NewProperties(base...).Min(1).Max(2)",
+		"count := 0",
+		"if b.A.IsPresent() {",
+		"out.Properties = v.properties.Validate(count)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateNoPropertyCount: an object without min/maxProperties gets no
+// property-count machinery, keeping plain objects byte-identical to before.
+func TestGenerateNoPropertyCount(t *testing.T) {
+	out, err := Generate([]byte(`{"type":"object","properties":{"a":{"type":"string"}}}`), "m", "Bag")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if strings.Contains(string(out), "NewProperties") {
+		t.Errorf("a plain object should have no property-count validator:\n%s", out)
+	}
+}
+
 // TestGenerateOneOfErrors: a union needs a discriminator with a propertyName and
 // object variants that resolve; the implicit form needs $ref variants.
 func TestGenerateOneOfErrors(t *testing.T) {

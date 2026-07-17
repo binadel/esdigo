@@ -32,6 +32,11 @@ type Message struct {
 	Direction Direction // which of the read/write/validate code to emit
 	Imports   []string  // the import set when this message is emitted in its own file
 
+	// object-level property-count constraints (JSON Schema minProperties/maxProperties),
+	// checked against the number of present fields.
+	MinProperties *int
+	MaxProperties *int
+
 	// Union, when non-nil, makes this message a discriminated union (a tagged
 	// type selected by a property value) instead of a struct: it has Variants
 	// rather than Fields. A parent still references it as an ordinary object field.
@@ -482,7 +487,7 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 		return fmt.Errorf("object type %q has no properties; a generated struct would silently drop all data (additionalProperties/maps are not supported)", name)
 	}
 
-	msg := &Message{Name: name, Doc: doc(s), Direction: dir}
+	msg := &Message{Name: name, Doc: doc(s), Direction: dir, MinProperties: s.MinProperties, MaxProperties: s.MaxProperties}
 	for _, jsonName := range sortedKeys(props) {
 		field, err := b.buildField(name, jsonName, props[jsonName], required[jsonName], dir)
 		if err != nil {
