@@ -8,6 +8,7 @@ var allCodes = []Code{
 	Required, NotNull, Boolean, Number, Integer, OutOfRange, String, Array, Object,
 	Length, MinLength, MaxLength, Pattern, Regex, Date, Time, DateTime, Duration,
 	Email, IP, IPv4, IPv6, Uri, Uuid, UuidVersion, ExactItems, MinItems, MaxItems,
+	MinProperties, MaxProperties,
 	Minimum, Maximum, ExclusiveMinimum, ExclusiveMaximum, MultipleOf, Enum, Const,
 	UniqueItems, Hostname, UriReference, JsonPointer,
 }

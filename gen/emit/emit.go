@@ -236,6 +236,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	// Validated<Message>
 	fmt.Fprintf(b, "type Validated%s struct {\n", m.Name)
 	fmt.Fprintf(b, "\tObject validation.Result[*%s]\n", m.Name)
+	if hasPropertyCount(m) {
+		b.WriteString("\tProperties validation.Result[int]\n")
+	}
 	for _, f := range m.Fields {
 		if !f.Validate {
 			continue
@@ -264,6 +267,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 		}
 		fmt.Fprintf(b, "\t%s %s\n", f.GoName, f.ValidatorType)
 	}
+	if hasPropertyCount(m) {
+		b.WriteString("\tproperties *validation.Properties\n")
+	}
 	if hasElemValidate(m) {
 		b.WriteString("\tbase []string\n")
 	}
@@ -282,6 +288,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 			continue
 		}
 		fmt.Fprintf(b, "\t\t%s: %s,\n", f.GoName, f.NewExpr)
+	}
+	if hasPropertyCount(m) {
+		fmt.Fprintf(b, "\t\tproperties: %s,\n", propertiesNewExpr(m))
 	}
 	if hasElemValidate(m) {
 		b.WriteString("\t\tbase: base,\n")
@@ -317,12 +326,22 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 			b.WriteString("\t}\n")
 		}
 	}
+	if hasPropertyCount(m) {
+		b.WriteString("\tcount := 0\n")
+		for _, f := range m.Fields {
+			fmt.Fprintf(b, "\tif %s.%s.IsPresent() {\n\t\tcount++\n\t}\n", arg, f.GoName)
+		}
+		b.WriteString("\tout.Properties = v.properties.Validate(count)\n")
+	}
 	b.WriteString("\treturn out\n}\n\n")
 
 	// IsValid: object-level plus every field, recursing into child objects and
 	// array elements.
 	fmt.Fprintf(b, "func (v *Validated%s) IsValid() bool {\n", m.Name)
 	b.WriteString("\tif !v.Object.IsValid() {\n\t\treturn false\n\t}\n")
+	if hasPropertyCount(m) {
+		b.WriteString("\tif !v.Properties.IsValid() {\n\t\treturn false\n\t}\n")
+	}
 	for _, f := range m.Fields {
 		if !f.Validate {
 			continue
@@ -342,6 +361,9 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	// out, descending into child objects.
 	fmt.Fprintf(b, "func (v *Validated%s) Collect(out *[]validation.FieldResult) {\n", m.Name)
 	b.WriteString("\tif !v.Object.IsValid() {\n\t\t*out = append(*out, &v.Object)\n\t}\n")
+	if hasPropertyCount(m) {
+		b.WriteString("\tif !v.Properties.IsValid() {\n\t\t*out = append(*out, &v.Properties)\n\t}\n")
+	}
 	for _, f := range m.Fields {
 		if !f.Validate {
 			continue
@@ -516,6 +538,26 @@ func emitUnionValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 // e.g. "customerObject" for GoName "Customer".
 func objField(goName string) string {
 	return strings.ToLower(goName[:1]) + goName[1:] + "Object"
+}
+
+// hasPropertyCount reports whether the message carries a minProperties/maxProperties
+// constraint, so the validator gains a property-count checker.
+func hasPropertyCount(m *ir.Message) bool {
+	return m.MinProperties != nil || m.MaxProperties != nil
+}
+
+// propertiesNewExpr renders the property-count validator constructor at the object's
+// own base path, with the Min/Max chain the message requires.
+func propertiesNewExpr(m *ir.Message) string {
+	var b strings.Builder
+	b.WriteString("validation.NewProperties(base...)")
+	if m.MinProperties != nil {
+		fmt.Fprintf(&b, ".Min(%d)", *m.MinProperties)
+	}
+	if m.MaxProperties != nil {
+		fmt.Fprintf(&b, ".Max(%d)", *m.MaxProperties)
+	}
+	return b.String()
 }
 
 // hasElemValidate reports whether any field validates per element, which means the
