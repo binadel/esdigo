@@ -8,7 +8,9 @@
 package schema
 
 import (
+	"bytes"
 	"encoding/json"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,17 +18,77 @@ import (
 // toJSON normalizes an input document to JSON. Bytes that are already valid JSON
 // pass through unchanged — a lossless fast path that keeps existing JSON inputs
 // byte-identical. Otherwise the document is treated as YAML (a JSON superset) and
-// converted: yaml.v3 decodes mappings to map[string]any and numbers to int/float64,
-// which json.Marshal renders back to faithful literals for the raw-JSON bounds.
+// converted through its node tree, which preserves mapping key order (decoding into
+// map[string]any then json.Marshal would sort keys and lose field order).
 func toJSON(data []byte) ([]byte, error) {
 	if json.Valid(data) {
 		return data, nil
 	}
-	var doc any
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
 		return nil, err
 	}
-	return json.Marshal(doc)
+	return yamlNodeToJSON(&node)
+}
+
+// yamlNodeToJSON renders a yaml.Node as JSON, preserving mapping key order so a
+// schema's property order survives the YAML→JSON boundary. Scalars go through the
+// node's own decode (yaml.v3 resolves numbers to int/float64, bools, and null), then
+// json.Marshal, so bounds and literals render exactly as the map path did before.
+func yamlNodeToJSON(n *yaml.Node) ([]byte, error) {
+	switch n.Kind {
+	case yaml.DocumentNode:
+		if len(n.Content) == 0 {
+			return []byte("null"), nil
+		}
+		return yamlNodeToJSON(n.Content[0])
+	case yaml.MappingNode:
+		var b bytes.Buffer
+		b.WriteByte('{')
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			key, err := json.Marshal(n.Content[i].Value) // object keys are JSON strings
+			if err != nil {
+				return nil, err
+			}
+			val, err := yamlNodeToJSON(n.Content[i+1])
+			if err != nil {
+				return nil, err
+			}
+			b.Write(key)
+			b.WriteByte(':')
+			b.Write(val)
+		}
+		b.WriteByte('}')
+		return b.Bytes(), nil
+	case yaml.SequenceNode:
+		var b bytes.Buffer
+		b.WriteByte('[')
+		for i, c := range n.Content {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			v, err := yamlNodeToJSON(c)
+			if err != nil {
+				return nil, err
+			}
+			b.Write(v)
+		}
+		b.WriteByte(']')
+		return b.Bytes(), nil
+	case yaml.AliasNode:
+		return yamlNodeToJSON(n.Alias)
+	case yaml.ScalarNode:
+		var v any
+		if err := n.Decode(&v); err != nil {
+			return nil, err
+		}
+		return json.Marshal(v)
+	default:
+		return []byte("null"), nil
+	}
 }
 
 // Schema is one JSON Schema node. Numeric bounds and enum/const values are kept
@@ -55,6 +117,11 @@ type Schema struct {
 	Required      []string           `json:"required"`
 	MinProperties *int               `json:"minProperties"`
 	MaxProperties *int               `json:"maxProperties"`
+
+	// propertyOrder records the order the "properties" keys appeared in the source
+	// (a plain map loses it), captured by UnmarshalJSON so generated struct fields
+	// follow the schema's field order. Read it through PropertyNames.
+	propertyOrder []string
 
 	// composition: allOf merges every subschema's properties and required list into
 	// this one (JSON Schema intersection; OpenAPI uses it for object inheritance).
@@ -102,6 +169,73 @@ type Schema struct {
 	// any
 	Enum  []json.RawMessage `json:"enum"`
 	Const json.RawMessage   `json:"const"`
+}
+
+// UnmarshalJSON decodes a Schema and additionally records the source order of its
+// "properties" keys — the map alone loses it — so generated struct fields follow the
+// schema's field order. The alias type carries the standard field decoding without
+// recursing back into this method.
+func (s *Schema) UnmarshalJSON(data []byte) error {
+	type alias Schema
+	if err := json.Unmarshal(data, (*alias)(s)); err != nil {
+		return err
+	}
+	var probe struct {
+		Properties json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	order, err := objectKeyOrder(probe.Properties)
+	if err != nil {
+		return err
+	}
+	s.propertyOrder = order
+	return nil
+}
+
+// PropertyNames returns the property names in source order. It falls back to a stable
+// alphabetical sort when the order was not captured — e.g. a hand-built Schema value,
+// or a malformed object with duplicate keys — so callers always get every property.
+func (s *Schema) PropertyNames() []string {
+	if len(s.propertyOrder) == len(s.Properties) {
+		return s.propertyOrder
+	}
+	names := make([]string, 0, len(s.Properties))
+	for name := range s.Properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// objectKeyOrder returns the keys of a JSON object literal in source order, reading
+// the token stream directly. A null or absent value (or a non-object) yields no keys.
+func objectKeyOrder(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if open, ok := tok.(json.Delim); !ok || open != '{' {
+		return nil, nil
+	}
+	var order []string
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		order = append(order, key.(string))
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return nil, err
+		}
+	}
+	return order, nil
 }
 
 // Discriminator is the OpenAPI discriminator object: the property that carries the

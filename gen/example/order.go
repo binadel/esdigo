@@ -14,8 +14,8 @@ import (
 
 // Address is a postal address.
 type Address struct {
-	City   types.String `json:"city"`
 	Street types.String `json:"street"`
+	City   types.String `json:"city"`
 }
 
 func (a *Address) MarshalJSON() ([]byte, error) {
@@ -37,22 +37,22 @@ func (a *Address) WriteJSON(w *json.Writer) bool {
 	}
 	needsComma := false
 	w.BeginObject()
-	if a.City.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"city\":")
-		if !a.City.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
 	if a.Street.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
 		w.WriteRawString("\"street\":")
 		if !a.Street.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if a.City.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"city\":")
+		if !a.City.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -74,10 +74,10 @@ func (a *Address) ReadJSON(r *json.Reader) bool {
 				if r.NameSeparator() {
 					ok := false
 					switch name {
-					case "city":
-						ok = a.City.ReadJSON(r)
 					case "street":
 						ok = a.Street.ReadJSON(r)
+					case "city":
+						ok = a.City.ReadJSON(r)
 					default:
 						ok = r.SkipValue()
 					}
@@ -108,19 +108,19 @@ func (a *Address) ReadJSON(r *json.Reader) bool {
 
 type ValidatedAddress struct {
 	Object validation.Result[*Address]
-	City   validation.Result[string]
 	Street validation.Result[string]
+	City   validation.Result[string]
 }
 
 type AddressValidator struct {
-	City   *validation.String
 	Street *validation.String
+	City   *validation.String
 }
 
 func NewAddressValidator(base ...string) *AddressValidator {
 	return &AddressValidator{
-		City:   validation.NewString(validation.SubPath(base, "city")...).Required().NotNull().MinLength(1),
 		Street: validation.NewString(validation.SubPath(base, "street")...).NotNull().MaxLength(200),
+		City:   validation.NewString(validation.SubPath(base, "city")...).Required().NotNull().MinLength(1),
 	}
 }
 
@@ -129,8 +129,8 @@ func (v *AddressValidator) Validate(a *Address) *ValidatedAddress {
 		return &ValidatedAddress{}
 	}
 	out := &ValidatedAddress{}
-	out.City = v.City.Validate(a.City)
 	out.Street = v.Street.Validate(a.Street)
+	out.City = v.City.Validate(a.City)
 	return out
 }
 
@@ -138,10 +138,10 @@ func (v *ValidatedAddress) IsValid() bool {
 	if !v.Object.IsValid() {
 		return false
 	}
-	if !v.City.IsValid() {
+	if !v.Street.IsValid() {
 		return false
 	}
-	if !v.Street.IsValid() {
+	if !v.City.IsValid() {
 		return false
 	}
 	return true
@@ -151,11 +151,11 @@ func (v *ValidatedAddress) Collect(out *[]validation.FieldResult) {
 	if !v.Object.IsValid() {
 		*out = append(*out, &v.Object)
 	}
-	if !v.City.IsValid() {
-		*out = append(*out, &v.City)
-	}
 	if !v.Street.IsValid() {
 		*out = append(*out, &v.Street)
+	}
+	if !v.City.IsValid() {
+		*out = append(*out, &v.City)
 	}
 }
 
@@ -167,12 +167,12 @@ func (v *ValidatedAddress) Failures() []validation.FieldResult {
 
 // Order is a customer order.
 type Order struct {
-	BillingAddress  types.Object[Address, *Address]             `json:"billingAddress"`
-	Customer        types.Object[OrderCustomer, *OrderCustomer] `json:"customer"`
 	Id              types.String                                `json:"id"`
-	PastAddresses   types.Array[Address, *Address]              `json:"pastAddresses"`
+	Customer        types.Object[OrderCustomer, *OrderCustomer] `json:"customer"`
 	ShippingAddress types.Object[Address, *Address]             `json:"shippingAddress"`
+	BillingAddress  types.Object[Address, *Address]             `json:"billingAddress"`
 	Tags            types.StringArray                           `json:"tags"`
+	PastAddresses   types.Array[Address, *Address]              `json:"pastAddresses"`
 }
 
 func (o *Order) MarshalJSON() ([]byte, error) {
@@ -194,12 +194,12 @@ func (o *Order) WriteJSON(w *json.Writer) bool {
 	}
 	needsComma := false
 	w.BeginObject()
-	if o.BillingAddress.IsPresent() {
+	if o.Id.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
-		w.WriteRawString("\"billingAddress\":")
-		if !o.BillingAddress.WriteJSON(w) {
+		w.WriteRawString("\"id\":")
+		if !o.Id.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -214,26 +214,6 @@ func (o *Order) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
-	if o.Id.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"id\":")
-		if !o.Id.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
-	if o.PastAddresses.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"pastAddresses\":")
-		if !o.PastAddresses.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
 	if o.ShippingAddress.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
@@ -244,12 +224,32 @@ func (o *Order) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
+	if o.BillingAddress.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"billingAddress\":")
+		if !o.BillingAddress.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
 	if o.Tags.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
 		w.WriteRawString("\"tags\":")
 		if !o.Tags.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if o.PastAddresses.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"pastAddresses\":")
+		if !o.PastAddresses.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -271,18 +271,18 @@ func (o *Order) ReadJSON(r *json.Reader) bool {
 				if r.NameSeparator() {
 					ok := false
 					switch name {
-					case "billingAddress":
-						ok = o.BillingAddress.ReadJSON(r)
-					case "customer":
-						ok = o.Customer.ReadJSON(r)
 					case "id":
 						ok = o.Id.ReadJSON(r)
-					case "pastAddresses":
-						ok = o.PastAddresses.ReadJSON(r)
+					case "customer":
+						ok = o.Customer.ReadJSON(r)
 					case "shippingAddress":
 						ok = o.ShippingAddress.ReadJSON(r)
+					case "billingAddress":
+						ok = o.BillingAddress.ReadJSON(r)
 					case "tags":
 						ok = o.Tags.ReadJSON(r)
+					case "pastAddresses":
+						ok = o.PastAddresses.ReadJSON(r)
 					default:
 						ok = r.SkipValue()
 					}
@@ -313,39 +313,39 @@ func (o *Order) ReadJSON(r *json.Reader) bool {
 
 type ValidatedOrder struct {
 	Object             validation.Result[*Order]
-	BillingAddress     *ValidatedAddress
-	Customer           *ValidatedOrderCustomer
 	Id                 validation.Result[uuid.UUID]
+	Customer           *ValidatedOrderCustomer
+	ShippingAddress    *ValidatedAddress
+	BillingAddress     *ValidatedAddress
+	Tags               validation.Result[[]string]
 	PastAddresses      validation.Result[[]*Address]
 	PastAddressesItems []*ValidatedAddress
-	ShippingAddress    *ValidatedAddress
-	Tags               validation.Result[[]string]
 }
 
 type OrderValidator struct {
-	BillingAddress        *AddressValidator
-	billingAddressObject  *validation.Object[Address, *Address]
+	Id                    *validation.Uuid
 	Customer              *OrderCustomerValidator
 	customerObject        *validation.Object[OrderCustomer, *OrderCustomer]
-	Id                    *validation.Uuid
-	PastAddresses         *validation.Array[Address, *Address]
 	ShippingAddress       *AddressValidator
 	shippingAddressObject *validation.Object[Address, *Address]
+	BillingAddress        *AddressValidator
+	billingAddressObject  *validation.Object[Address, *Address]
 	Tags                  *validation.ScalarArray[string]
+	PastAddresses         *validation.Array[Address, *Address]
 	base                  []string
 }
 
 func NewOrderValidator(base ...string) *OrderValidator {
 	return &OrderValidator{
-		BillingAddress:        NewAddressValidator(validation.SubPath(base, "billingAddress")...),
-		billingAddressObject:  validation.NewObject[Address, *Address](validation.SubPath(base, "billingAddress")...),
+		Id:                    validation.NewString(validation.SubPath(base, "id")...).Required().NotNull().Uuid(),
 		Customer:              NewOrderCustomerValidator(validation.SubPath(base, "customer")...),
 		customerObject:        validation.NewObject[OrderCustomer, *OrderCustomer](validation.SubPath(base, "customer")...).Required().NotNull(),
-		Id:                    validation.NewString(validation.SubPath(base, "id")...).Required().NotNull().Uuid(),
-		PastAddresses:         validation.NewArray[Address, *Address](validation.SubPath(base, "pastAddresses")...).NotNull(),
 		ShippingAddress:       NewAddressValidator(validation.SubPath(base, "shippingAddress")...),
 		shippingAddressObject: validation.NewObject[Address, *Address](validation.SubPath(base, "shippingAddress")...).NotNull(),
+		BillingAddress:        NewAddressValidator(validation.SubPath(base, "billingAddress")...),
+		billingAddressObject:  validation.NewObject[Address, *Address](validation.SubPath(base, "billingAddress")...),
 		Tags:                  validation.NewScalarArray[string](validation.SubPath(base, "tags")...).NotNull().MinItems(1).MaxItems(5).UniqueItems(),
+		PastAddresses:         validation.NewArray[Address, *Address](validation.SubPath(base, "pastAddresses")...).NotNull(),
 		base:                  base,
 	}
 }
@@ -355,19 +355,19 @@ func (v *OrderValidator) Validate(o *Order) *ValidatedOrder {
 		return &ValidatedOrder{}
 	}
 	out := &ValidatedOrder{}
-	out.BillingAddress = v.BillingAddress.Validate(o.BillingAddress.Value)
-	out.BillingAddress.Object = v.billingAddressObject.Validate(o.BillingAddress)
+	out.Id = v.Id.Validate(o.Id)
 	out.Customer = v.Customer.Validate(o.Customer.Value)
 	out.Customer.Object = v.customerObject.Validate(o.Customer)
-	out.Id = v.Id.Validate(o.Id)
+	out.ShippingAddress = v.ShippingAddress.Validate(o.ShippingAddress.Value)
+	out.ShippingAddress.Object = v.shippingAddressObject.Validate(o.ShippingAddress)
+	out.BillingAddress = v.BillingAddress.Validate(o.BillingAddress.Value)
+	out.BillingAddress.Object = v.billingAddressObject.Validate(o.BillingAddress)
+	out.Tags = v.Tags.Validate(&o.Tags)
 	out.PastAddresses = v.PastAddresses.Validate(o.PastAddresses)
 	for i, elem := range o.PastAddresses.Value {
 		p := validation.SubPath(validation.SubPath(v.base, "pastAddresses"), strconv.Itoa(i))
 		out.PastAddressesItems = append(out.PastAddressesItems, NewAddressValidator(p...).Validate(elem))
 	}
-	out.ShippingAddress = v.ShippingAddress.Validate(o.ShippingAddress.Value)
-	out.ShippingAddress.Object = v.shippingAddressObject.Validate(o.ShippingAddress)
-	out.Tags = v.Tags.Validate(&o.Tags)
 	return out
 }
 
@@ -375,13 +375,19 @@ func (v *ValidatedOrder) IsValid() bool {
 	if !v.Object.IsValid() {
 		return false
 	}
-	if v.BillingAddress != nil && !v.BillingAddress.IsValid() {
+	if !v.Id.IsValid() {
 		return false
 	}
 	if v.Customer != nil && !v.Customer.IsValid() {
 		return false
 	}
-	if !v.Id.IsValid() {
+	if v.ShippingAddress != nil && !v.ShippingAddress.IsValid() {
+		return false
+	}
+	if v.BillingAddress != nil && !v.BillingAddress.IsValid() {
+		return false
+	}
+	if !v.Tags.IsValid() {
 		return false
 	}
 	if !v.PastAddresses.IsValid() {
@@ -392,12 +398,6 @@ func (v *ValidatedOrder) IsValid() bool {
 			return false
 		}
 	}
-	if v.ShippingAddress != nil && !v.ShippingAddress.IsValid() {
-		return false
-	}
-	if !v.Tags.IsValid() {
-		return false
-	}
 	return true
 }
 
@@ -405,26 +405,26 @@ func (v *ValidatedOrder) Collect(out *[]validation.FieldResult) {
 	if !v.Object.IsValid() {
 		*out = append(*out, &v.Object)
 	}
-	if v.BillingAddress != nil {
-		v.BillingAddress.Collect(out)
+	if !v.Id.IsValid() {
+		*out = append(*out, &v.Id)
 	}
 	if v.Customer != nil {
 		v.Customer.Collect(out)
 	}
-	if !v.Id.IsValid() {
-		*out = append(*out, &v.Id)
+	if v.ShippingAddress != nil {
+		v.ShippingAddress.Collect(out)
+	}
+	if v.BillingAddress != nil {
+		v.BillingAddress.Collect(out)
+	}
+	if !v.Tags.IsValid() {
+		*out = append(*out, &v.Tags)
 	}
 	if !v.PastAddresses.IsValid() {
 		*out = append(*out, &v.PastAddresses)
 	}
 	for i := range v.PastAddressesItems {
 		v.PastAddressesItems[i].Collect(out)
-	}
-	if v.ShippingAddress != nil {
-		v.ShippingAddress.Collect(out)
-	}
-	if !v.Tags.IsValid() {
-		*out = append(*out, &v.Tags)
 	}
 }
 
@@ -435,8 +435,8 @@ func (v *ValidatedOrder) Failures() []validation.FieldResult {
 }
 
 type OrderCustomer struct {
-	Email types.String `json:"email"`
 	Name  types.String `json:"name"`
+	Email types.String `json:"email"`
 }
 
 func (o *OrderCustomer) MarshalJSON() ([]byte, error) {
@@ -458,22 +458,22 @@ func (o *OrderCustomer) WriteJSON(w *json.Writer) bool {
 	}
 	needsComma := false
 	w.BeginObject()
-	if o.Email.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"email\":")
-		if !o.Email.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
 	if o.Name.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
 		w.WriteRawString("\"name\":")
 		if !o.Name.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if o.Email.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"email\":")
+		if !o.Email.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -495,10 +495,10 @@ func (o *OrderCustomer) ReadJSON(r *json.Reader) bool {
 				if r.NameSeparator() {
 					ok := false
 					switch name {
-					case "email":
-						ok = o.Email.ReadJSON(r)
 					case "name":
 						ok = o.Name.ReadJSON(r)
+					case "email":
+						ok = o.Email.ReadJSON(r)
 					default:
 						ok = r.SkipValue()
 					}
@@ -529,19 +529,19 @@ func (o *OrderCustomer) ReadJSON(r *json.Reader) bool {
 
 type ValidatedOrderCustomer struct {
 	Object validation.Result[*OrderCustomer]
-	Email  validation.Result[*mail.Address]
 	Name   validation.Result[string]
+	Email  validation.Result[*mail.Address]
 }
 
 type OrderCustomerValidator struct {
-	Email *validation.Email
 	Name  *validation.String
+	Email *validation.Email
 }
 
 func NewOrderCustomerValidator(base ...string) *OrderCustomerValidator {
 	return &OrderCustomerValidator{
-		Email: validation.NewString(validation.SubPath(base, "email")...).NotNull().Email(),
 		Name:  validation.NewString(validation.SubPath(base, "name")...).Required().NotNull().MinLength(1),
+		Email: validation.NewString(validation.SubPath(base, "email")...).NotNull().Email(),
 	}
 }
 
@@ -550,8 +550,8 @@ func (v *OrderCustomerValidator) Validate(o *OrderCustomer) *ValidatedOrderCusto
 		return &ValidatedOrderCustomer{}
 	}
 	out := &ValidatedOrderCustomer{}
-	out.Email = v.Email.Validate(o.Email)
 	out.Name = v.Name.Validate(o.Name)
+	out.Email = v.Email.Validate(o.Email)
 	return out
 }
 
@@ -559,10 +559,10 @@ func (v *ValidatedOrderCustomer) IsValid() bool {
 	if !v.Object.IsValid() {
 		return false
 	}
-	if !v.Email.IsValid() {
+	if !v.Name.IsValid() {
 		return false
 	}
-	if !v.Name.IsValid() {
+	if !v.Email.IsValid() {
 		return false
 	}
 	return true
@@ -572,11 +572,11 @@ func (v *ValidatedOrderCustomer) Collect(out *[]validation.FieldResult) {
 	if !v.Object.IsValid() {
 		*out = append(*out, &v.Object)
 	}
-	if !v.Email.IsValid() {
-		*out = append(*out, &v.Email)
-	}
 	if !v.Name.IsValid() {
 		*out = append(*out, &v.Name)
+	}
+	if !v.Email.IsValid() {
+		*out = append(*out, &v.Email)
 	}
 }
 
