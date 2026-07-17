@@ -402,6 +402,80 @@ func TestGenerateDirectionInvalid(t *testing.T) {
 	}
 }
 
+// TestGenerateAllOf flattens an allOf composition: a $ref base plus an inline
+// extension merge their properties, required lists, and formats into one struct.
+func TestGenerateAllOf(t *testing.T) {
+	s := `{
+		"$defs":{"Base":{"type":"object","required":["id"],"properties":{"id":{"type":"string","format":"uuid"}}}},
+		"allOf":[
+			{"$ref":"#/$defs/Base"},
+			{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}}}
+		]
+	}`
+	out, err := Generate([]byte(s), "m", "Asset")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"type Asset struct",
+		"type Base struct", // the base is still generated on its own
+		`SubPath(base, "id")...).Required().NotNull().Uuid()`,
+		`SubPath(base, "name")...).Required().NotNull().MinLength(1)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateAllOfRoot: an allOf at the root (no top-level type:object) is still an
+// object; its subschemas merge into the named root struct.
+func TestGenerateAllOfRoot(t *testing.T) {
+	s := `{"allOf":[
+		{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}},
+		{"type":"object","properties":{"n":{"type":"integer"}}}
+	]}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type T struct", "types.String", "types.Int64", `SubPath(base, "id")...).Required()`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateAllOfNested: allOf composition is recursive — a base that is itself an
+// allOf flattens through, and an allOf property becomes an inline merged struct.
+func TestGenerateAllOfNested(t *testing.T) {
+	s := `{"$defs":{
+		"A":{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}},
+		"B":{"allOf":[{"$ref":"#/$defs/A"},{"type":"object","properties":{"b":{"type":"string"}}}]}
+	},"type":"object","properties":{
+		"nested":{"allOf":[{"$ref":"#/$defs/B"},{"type":"object","properties":{"c":{"type":"string"}}}]}
+	}}`
+	out, err := Generate([]byte(s), "m", "Root")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type RootNested struct", "type B struct", `json:"a"`, `json:"b"`, `json:"c"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateAllOfUnresolvedRef(t *testing.T) {
+	s := `{"allOf":[{"$ref":"#/$defs/Missing"},{"type":"object","properties":{"x":{"type":"string"}}}]}`
+	if _, err := Generate([]byte(s), "m", "T"); err == nil {
+		t.Errorf("allOf with an unresolved $ref should error")
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {

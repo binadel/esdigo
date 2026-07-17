@@ -144,7 +144,7 @@ type builder struct {
 // Build resolves a root object schema (plus its $defs and inline nested objects)
 // into a generated file. Each object becomes its own message.
 func Build(pkg, name string, root *schema.Schema) (*File, error) {
-	if root.Type.Primary() != "object" {
+	if !isObjectSchema(root) {
 		return nil, fmt.Errorf("root schema must be an object, got %q", root.Type.Primary())
 	}
 
@@ -163,7 +163,7 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	// Emit every object definition too, referenced or not.
 	for _, key := range sortedKeys(b.defs) {
 		s := b.defs[key]
-		if s.Type.Primary() != "object" {
+		if !isObjectSchema(s) {
 			continue
 		}
 		dir, err := directionOf(s)
@@ -189,7 +189,7 @@ func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 
 	for _, key := range sortedKeys(b.defs) {
 		s := b.defs[key]
-		if s.Type.Primary() != "object" {
+		if !isObjectSchema(s) {
 			continue
 		}
 		dir, err := directionOf(s)
@@ -223,6 +223,59 @@ func (b *builder) file(pkg string) *File {
 	}
 }
 
+// isObjectSchema reports whether s should produce (or reference) a generated struct:
+// an explicit type:object, or an allOf composition with no conflicting scalar type.
+func isObjectSchema(s *schema.Schema) bool {
+	if s.Type.Primary() == "object" {
+		return true
+	}
+	return s.Type.Primary() == "" && len(s.AllOf) > 0
+}
+
+// mergedObject flattens an object schema's effective properties and required set,
+// expanding allOf: each subschema's properties/required are merged in (a $ref
+// subschema is resolved), then the schema's own properties/required override. So a
+// derived type inlines its base's fields — matching esdigo's one-struct-per-type
+// model. A plain object (no allOf) yields its own properties unchanged.
+func (b *builder) mergedObject(s *schema.Schema) (map[string]*schema.Schema, map[string]bool, error) {
+	props := map[string]*schema.Schema{}
+	required := map[string]bool{}
+	if err := b.mergeInto(s, props, required, map[*schema.Schema]bool{}); err != nil {
+		return nil, nil, err
+	}
+	return props, required, nil
+}
+
+// mergeInto accumulates s's allOf subschemas (base) then s's own properties/required
+// into props/required. seen breaks cycles from a self-referential allOf.
+func (b *builder) mergeInto(s *schema.Schema, props map[string]*schema.Schema, required map[string]bool, seen map[*schema.Schema]bool) error {
+	if seen[s] {
+		return nil
+	}
+	seen[s] = true
+
+	for _, sub := range s.AllOf {
+		resolved := sub
+		if sub.Ref != "" {
+			target, ok := b.defs[goName(refName(sub.Ref))]
+			if !ok {
+				return fmt.Errorf("unresolved $ref %q in allOf", sub.Ref)
+			}
+			resolved = target
+		}
+		if err := b.mergeInto(resolved, props, required, seen); err != nil {
+			return err
+		}
+	}
+	for name, prop := range s.Properties {
+		props[name] = prop
+	}
+	for _, name := range s.Required {
+		required[name] = true
+	}
+	return nil
+}
+
 // buildMessage produces the message named goName for object schema s (once). dir is
 // the direction the message inherits (inline children share their parent's).
 func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) error {
@@ -231,9 +284,14 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 	}
 	b.built[name] = true
 
+	props, required, err := b.mergedObject(s)
+	if err != nil {
+		return err
+	}
+
 	msg := &Message{Name: name, Doc: doc(s), Direction: dir}
-	for _, jsonName := range sortedKeys(s.Properties) {
-		field, err := b.buildField(name, jsonName, s.Properties[jsonName], s.IsRequired(jsonName), dir)
+	for _, jsonName := range sortedKeys(props) {
+		field, err := b.buildField(name, jsonName, props[jsonName], required[jsonName], dir)
 		if err != nil {
 			return err
 		}
@@ -249,14 +307,15 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 	if s.Ref != "" {
 		return b.buildRefField(msgName, jsonName, s, required, dir)
 	}
-
-	switch kind := s.Type.Primary(); kind {
-	case "object":
+	if isObjectSchema(s) {
 		child := msgName + goName(jsonName)
 		if err := b.buildMessage(child, s, dir); err != nil {
 			return nil, err
 		}
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
+	}
+
+	switch kind := s.Type.Primary(); kind {
 	case "array":
 		return b.buildArrayField(msgName, jsonName, s, required, dir)
 	case "string", "integer", "number", "boolean":
@@ -341,7 +400,7 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 		if !ok {
 			return "", false, nil, fmt.Errorf("unresolved $ref %q in items of %q", items.Ref, jsonName)
 		}
-		if target.Type.Primary() == "object" {
+		if isObjectSchema(target) {
 			child := key
 			targetDir, err := directionOf(target)
 			if err != nil {
@@ -355,6 +414,14 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 		return b.arrayElem(msgName, jsonName, target, dir)
 	}
 
+	if isObjectSchema(items) {
+		child := msgName + goName(jsonName) + "Item"
+		if err := b.buildMessage(child, items, dir); err != nil {
+			return "", false, nil, err
+		}
+		return child, true, items, nil
+	}
+
 	switch kind := items.Type.Primary(); kind {
 	case "string":
 		return "types.String", false, items, nil
@@ -362,12 +429,6 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 		return "types." + numericAlias[numericGoType(kind, items.Format)], false, items, nil
 	case "boolean":
 		return "types.Boolean", false, items, nil
-	case "object":
-		child := msgName + goName(jsonName) + "Item"
-		if err := b.buildMessage(child, items, dir); err != nil {
-			return "", false, nil, err
-		}
-		return child, true, items, nil
 	default:
 		return "", false, nil, fmt.Errorf("unsupported array element type %q in %q", kind, jsonName)
 	}
@@ -427,7 +488,7 @@ func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, requ
 	if !ok {
 		return nil, fmt.Errorf("unresolved $ref %q for property %q", s.Ref, jsonName)
 	}
-	if target.Type.Primary() == "object" {
+	if isObjectSchema(target) {
 		child := key
 		// A shared named target carries its OWN direction (default Both), not the
 		// referrer's — so it stays usable from both inbound and outbound parents.

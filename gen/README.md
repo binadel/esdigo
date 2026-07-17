@@ -191,6 +191,26 @@ An inline nested object inherits its parent's direction. A shared `$ref` target 
 its own flag (default `both`), so it stays usable from both inbound and outbound
 parents; if you narrow a shared type, make sure every referrer is compatible.
 
+## Composition (`allOf`)
+
+A schema's **`allOf`** is flattened: every subschema's `properties` and `required`
+are merged into the generated struct (a `$ref` subschema is resolved, and the schema's
+own `properties` override). This models OpenAPI object inheritance as one struct per
+type.
+
+```yaml
+Asset:
+  allOf:
+    - $ref: '#/components/schemas/Base'     # id, ...
+    - type: object                          # merged in
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+```
+
+Merging is recursive (a base may itself be an `allOf`). `oneOf` / `anyOf` /
+`if`-`then`-`else` are not handled.
+
 ## Notes and limitations
 
 - Array **element** failures carry their index in the path, e.g.
@@ -198,7 +218,7 @@ parents; if you narrow a shared type, make sure every referrer is compatible.
   values (the path lives on the result, not the error).
 - Directory mode deduplicates types by **name** — two different types with the
   same name silently collapse (last wins).
-- Not yet handled: `oneOf`/`anyOf`/`allOf`/`if`-`then`-`else`, `enum`/`const` for
-  big-number fields, `minProperties`/`maxProperties`, `dependentRequired`, nested
-  arrays (`array` of `array`), and OpenAPI `paths` request/response bodies (only
+- Not yet handled: `oneOf`/`anyOf`/`if`-`then`-`else`, `enum`/`const` for big-number
+  fields, `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
+  (`array` of `array`), and OpenAPI `paths` request/response bodies (only
   `components.schemas` is extracted).

@@ -53,6 +53,10 @@ type Schema struct {
 	Properties map[string]*Schema `json:"properties"`
 	Required   []string           `json:"required"`
 
+	// composition: allOf merges every subschema's properties and required list into
+	// this one (JSON Schema intersection; OpenAPI uses it for object inheritance).
+	AllOf []*Schema `json:"allOf"`
+
 	// named subschemas: "$defs" (2020-12 / OpenAPI 3.1) or "definitions" (draft-07)
 	Defs        map[string]*Schema `json:"$defs"`
 	Definitions map[string]*Schema `json:"definitions"`
