@@ -143,8 +143,9 @@ silently drop data).
 - **`oneOf` / `anyOf`** — only with a **`discriminator`** (see [Unions](#unions-oneof--anyof)).
   Also the `[X, null]` idiom → nullable `X`.
 - **Nullability** — `type: ["string","null"]` (3.1) or `nullable: true` (3.0).
-- **Direction** — `x-esdigo-io: in | out | both` (default `both`); see
-  [Direction](#direction-inbound--outbound).
+- **Validation opt-out** — `x-esdigo-validate: false` skips validator generation for a
+  produce-only type (default: validate); the model (read + write) is always complete.
+  See [Validators](#validators-x-esdigo-validate).
 - **String `format`:** `email`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `uuid`, `date`,
   `time`, `date-time`, `duration`, `regex`, `hostname`, `json-pointer`.
 - **Numeric `format`** (else `integer`→int64, `number`→float64): `int`, `int8`, `int16`,
@@ -171,6 +172,9 @@ silently drop data).
 - An `integer` `minimum`/`maximum`/`enum`/`const` that **doesn't fit the chosen width**
   (out of range, or negative on an unsigned type), or a non-integer bound.
 - Two **different** types that share a name (across merged files/components).
+- A **validated** type that `$ref`s an **`x-esdigo-validate: false`** child as a nested
+  field — the parent's validator needs the child's validator, which the child does not
+  generate.
 
 ### Ignored (accepted, no effect)
 
@@ -205,8 +209,7 @@ components:
         kind: { type: string, const: Dog }
         name: { type: string, minLength: 1 }
     Owner:
-      type: object
-      x-esdigo-io: in                       # request type: reader + validators, no writer
+      type: object                          # a request: validated by default
       required: [id, pets]
       properties:
         id:    { type: string, format: uuid }
@@ -294,27 +297,31 @@ esdigo models a field as three independent states — **present**, **defined**
 - Nullable — either `type: ["string", "null"]` (JSON Schema / OpenAPI 3.1) or
   `"nullable": true` (OpenAPI 3.0) — omits `.NotNull()`.
 
-## Direction (inbound / outbound)
+## Validators (`x-esdigo-validate`)
 
-Flag a type with the **`x-esdigo-io`** extension to generate only the code it needs:
+The **`x-esdigo-validate`** extension controls **only whether validators are
+generated**. The model — `MarshalJSON`/`WriteJSON` and `UnmarshalJSON`/`ReadJSON` — is
+always emitted in full, so a type stays usable as a nested field regardless of the flag.
 
-| `x-esdigo-io` | Generated |
+| `x-esdigo-validate` | Generated |
 |---|---|
-| `both` (default, or omitted) | struct + marshal/write + unmarshal/read + validators |
-| `out` | struct + `MarshalJSON` / `WriteJSON` only — a value you only produce (e.g. a response): no reader, no validators |
-| `in` | struct + `UnmarshalJSON` / `ReadJSON` + validators — a value you only receive (e.g. a request): no writer |
+| omitted / `true` (default) | struct + marshal/write + unmarshal/read + validators |
+| `false` | struct + marshal/write + unmarshal/read, but **no validators** — a value you only produce (e.g. a response) and never validate |
 
 ```yaml
 components:
   schemas:
     AssetResponse:
-      x-esdigo-io: out      # write-only, no validators
+      x-esdigo-validate: false   # full model, but no validators
       type: object
 ```
 
-An inline nested object inherits its parent's direction. A shared `$ref` target keeps
-its own flag (default `both`), so it stays usable from both inbound and outbound
-parents; if you narrow a shared type, make sure every referrer is compatible.
+An inline nested object inherits its parent's flag, so a `x-esdigo-validate: false`
+parent's nested objects are validator-free too. A shared `$ref` target keeps its own
+flag (default: validate). Marking a shared type `x-esdigo-validate: false` drops its
+validators everywhere it is referenced, so a **validated** parent that `$ref`s an
+unvalidated child is a generation error — either let the child validate, or mark the
+parent `x-esdigo-validate: false` as well.
 
 ## Composition (`allOf`)
 

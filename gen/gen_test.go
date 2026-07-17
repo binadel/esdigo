@@ -428,52 +428,58 @@ func TestGenerateRawNumberErrors(t *testing.T) {
 	}
 }
 
-// TestGenerateDirectionOut: an x-esdigo-io "out" type emits only the marshal + writer
-// — no reader, no validators, and no validation import.
-func TestGenerateDirectionOut(t *testing.T) {
-	s := `{"x-esdigo-io":"out","type":"object","properties":{"id":{"type":"string"}}}`
+// TestGenerateValidateFalse: an x-esdigo-validate:false type emits the full model
+// (marshal/write and unmarshal/read) but no validators — the flag gates only the
+// validator side, so the model stays complete and the type is usable as a nested
+// field.
+func TestGenerateValidateFalse(t *testing.T) {
+	s := `{"x-esdigo-validate":false,"type":"object","properties":{"id":{"type":"string"}}}`
 	out, err := Generate([]byte(s), "m", "Resp")
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	got := string(out)
-	for _, want := range []string{"func (r *Resp) MarshalJSON(", "func (r *Resp) WriteJSON("} {
+	for _, want := range []string{
+		"func (re *Resp) MarshalJSON(", "func (re *Resp) WriteJSON(",
+		"func (re *Resp) UnmarshalJSON(", "func (re *Resp) ReadJSON(",
+	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("out type missing %q:\n%s", want, got)
+			t.Errorf("unvalidated type missing %q:\n%s", want, got)
 		}
 	}
-	for _, absent := range []string{"UnmarshalJSON", "ReadJSON", "RespValidator", "ValidatedResp", "esdigo/validation"} {
+	for _, absent := range []string{"RespValidator", "ValidatedResp", "esdigo/validation"} {
 		if strings.Contains(got, absent) {
-			t.Errorf("out type should not emit %q:\n%s", absent, got)
+			t.Errorf("unvalidated type should not emit %q:\n%s", absent, got)
 		}
 	}
 }
 
-// TestGenerateDirectionIn: an x-esdigo-io "in" type emits the reader + validators and
-// no writer.
-func TestGenerateDirectionIn(t *testing.T) {
-	s := `{"x-esdigo-io":"in","type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}}}`
+// TestGenerateValidateDefault: a type with no x-esdigo-validate (the default) emits
+// the full model plus validators. Only x-esdigo-validate:false drops validators.
+func TestGenerateValidateDefault(t *testing.T) {
+	s := `{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}}}`
 	out, err := Generate([]byte(s), "m", "Req")
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 	got := string(out)
-	for _, want := range []string{"func (r *Req) UnmarshalJSON(", "func (r *Req) ReadJSON(", "type ReqValidator struct", "func NewReqValidator("} {
+	for _, want := range []string{
+		"func (re *Req) UnmarshalJSON(", "func (re *Req) ReadJSON(",
+		"func (re *Req) MarshalJSON(", "func (re *Req) WriteJSON(",
+		"type ReqValidator struct", "func NewReqValidator(",
+	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("in type missing %q:\n%s", want, got)
-		}
-	}
-	for _, absent := range []string{"MarshalJSON", "WriteJSON"} {
-		if strings.Contains(got, absent) {
-			t.Errorf("in type should not emit %q:\n%s", absent, got)
+			t.Errorf("validated type missing %q:\n%s", want, got)
 		}
 	}
 }
 
-// TestGenerateDirectionInlineInherits: an inline child object inherits its parent's
-// direction, so an out parent's nested object is also write-only (no validator).
-func TestGenerateDirectionInlineInherits(t *testing.T) {
-	s := `{"x-esdigo-io":"out","type":"object","properties":{
+// TestGenerateValidateInlineInherits: an inline child object inherits its parent's
+// x-esdigo-validate flag, so an unvalidated parent's nested object is validator-free
+// too — but it still emits the full model (reader and writer), so the parent's
+// types.Object field, whose constraint requires both, compiles.
+func TestGenerateValidateInlineInherits(t *testing.T) {
+	s := `{"x-esdigo-validate":false,"type":"object","properties":{
 		"inner":{"type":"object","properties":{"x":{"type":"string"}}}
 	}}`
 	out, err := Generate([]byte(s), "m", "Root")
@@ -481,18 +487,73 @@ func TestGenerateDirectionInlineInherits(t *testing.T) {
 		t.Fatalf("generate: %v", err)
 	}
 	got := string(out)
-	if !strings.Contains(got, "func (r *RootInner) WriteJSON(") {
-		t.Errorf("inline child should emit a writer:\n%s", got)
+	for _, want := range []string{"func (ro *RootInner) WriteJSON(", "func (ro *RootInner) ReadJSON("} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inline child should emit the full model:\n%s", got)
+		}
 	}
-	if strings.Contains(got, "RootInnerValidator") || strings.Contains(got, "func (r *RootInner) ReadJSON(") {
-		t.Errorf("inline child of an out type should inherit out (no validator/reader):\n%s", got)
+	if strings.Contains(got, "RootInnerValidator") {
+		t.Errorf("inline child of an unvalidated type should inherit the flag (no validator):\n%s", got)
 	}
 }
 
-func TestGenerateDirectionInvalid(t *testing.T) {
-	s := `{"x-esdigo-io":"sideways","type":"object","properties":{"a":{"type":"string"}}}`
+// TestGenerateValidateFalseNestedRef: the bug that motivated this design — an
+// unvalidated type with a $ref to another unvalidated type as a nested field. Both
+// emit the full model (so the types.Object[Child,*Child] field compiles) and neither
+// emits validators.
+func TestGenerateValidateFalseNestedRef(t *testing.T) {
+	files := map[string][]byte{"s.json": []byte(`{
+		"components":{"schemas":{
+			"PublicLink":{"x-esdigo-validate":false,"type":"object","required":["url"],
+				"properties":{"url":{"type":"string"}}},
+			"Asset":{"x-esdigo-validate":false,"type":"object","required":["link"],
+				"properties":{"link":{"$ref":"#/components/schemas/PublicLink"}}}
+		}}
+	}`)}
+	out, err := GenerateDir(files, "m")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"Link types.Object[PublicLink, *PublicLink]",
+		"func (p *PublicLink) ReadJSON(", "func (p *PublicLink) WriteJSON(",
+		"func (a *Asset) ReadJSON(", "func (a *Asset) WriteJSON(",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"Validator", "Validated", "esdigo/validation"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("unvalidated tree should not emit %q:\n%s", absent, got)
+		}
+	}
+}
+
+// TestGenerateValidateFalseChildInValidatedParent: a validated parent that $refs an
+// x-esdigo-validate:false child is a generation error — the parent's validator would
+// call the child's New<Child>Validator, which the child does not generate.
+func TestGenerateValidateFalseChildInValidatedParent(t *testing.T) {
+	files := map[string][]byte{"s.json": []byte(`{
+		"components":{"schemas":{
+			"Child":{"x-esdigo-validate":false,"type":"object","required":["x"],
+				"properties":{"x":{"type":"string"}}},
+			"Parent":{"type":"object","required":["child"],
+				"properties":{"child":{"$ref":"#/components/schemas/Child"}}}
+		}}
+	}`)}
+	if _, err := GenerateDir(files, "m"); err == nil {
+		t.Fatal("a validated parent referencing an unvalidated child should be a generation error")
+	}
+}
+
+// TestGenerateValidateInvalid: x-esdigo-validate is a boolean, so a non-boolean value
+// is a parse error rather than silently ignored.
+func TestGenerateValidateInvalid(t *testing.T) {
+	s := `{"x-esdigo-validate":"sideways","type":"object","properties":{"a":{"type":"string"}}}`
 	if _, err := Generate([]byte(s), "m", "T"); err == nil {
-		t.Errorf("an invalid x-esdigo-io value should error")
+		t.Errorf("a non-boolean x-esdigo-validate value should error")
 	}
 }
 
