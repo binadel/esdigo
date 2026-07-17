@@ -129,6 +129,34 @@ result:
 | `regex` | `*validation.Regex` | `*regexp.Regexp` |
 | `hostname` / `json-pointer` | `*validation.Hostname` / `JsonPointer` | `string` |
 
+An `integer` or `number` with a **`format`** selects a wider Go backing type — the
+model wrapper, its validator, and (for scalar arrays) the specialized array all
+follow:
+
+| Schema type | format | Go type | model wrapper |
+|---|---|---|---|
+| `integer` | `int32` / `int64` (OpenAPI), or `int8`…`uint64` / `int` / `uint` | `int32`, `uint16`, … | `types.Int32`, `types.UInt16`, … (`…Array` for arrays) |
+| `number` | `float` / `float32` | `float32` | `types.Float32` |
+| `number` | `double` / `float64` | `float64` | `types.Float64` |
+| `integer` | `bigint` / `biginteger` | `*big.Int` | `types.BigInt` |
+| `number` | `decimal` / `bigfloat` / `bignumber` | `*big.Float` | `types.BigFloat` |
+| `integer` / `number` | `raw` / `rawnumber` | raw JSON bytes | `types.RawNumber` |
+
+The default is `int64` / `float64`. A `minimum`/`maximum`/`enum`/`const` that does not
+fit the chosen fixed-width integer type (out of range, or negative on an unsigned type)
+is a generation error rather than code that won't compile.
+
+The **big-number** formats use the arbitrary-precision `types.BigInt` / `types.BigFloat`
+and their dedicated validators, exact at any magnitude; their bounds and `enum`/`const`
+preserve the literal exactly (values beyond `int64`/`float64` are fine).
+
+The **raw** formats give `types.RawNumber`, which preserves the JSON number verbatim.
+Because the value is kept as-is, a raw field validates **presence and null only** (via
+`validation.RawNumber`) — `required` and non-null are honored, but a numeric constraint
+(`minimum`/`enum`/`const`/…) is a generation error. A raw field with no presence
+requirement is a model-only passthrough. Big and raw numbers are not yet supported as
+array elements.
+
 Unknown formats are ignored (JSON Schema treats `format` as an annotation).
 
 ## Constraints
@@ -155,14 +183,95 @@ esdigo models a field as three independent states — **present**, **defined**
 - Nullable — either `type: ["string", "null"]` (JSON Schema / OpenAPI 3.1) or
   `"nullable": true` (OpenAPI 3.0) — omits `.NotNull()`.
 
+## Direction (inbound / outbound)
+
+Flag a type with the **`x-esdigo-io`** extension to generate only the code it needs:
+
+| `x-esdigo-io` | Generated |
+|---|---|
+| `both` (default, or omitted) | struct + marshal/write + unmarshal/read + validators |
+| `out` | struct + `MarshalJSON` / `WriteJSON` only — a value you only produce (e.g. a response): no reader, no validators |
+| `in` | struct + `UnmarshalJSON` / `ReadJSON` + validators — a value you only receive (e.g. a request): no writer |
+
+```yaml
+components:
+  schemas:
+    AssetResponse:
+      x-esdigo-io: out      # write-only, no validators
+      type: object
+```
+
+An inline nested object inherits its parent's direction. A shared `$ref` target keeps
+its own flag (default `both`), so it stays usable from both inbound and outbound
+parents; if you narrow a shared type, make sure every referrer is compatible.
+
+## Composition (`allOf`)
+
+A schema's **`allOf`** is flattened: every subschema's `properties` and `required`
+are merged into the generated struct (a `$ref` subschema is resolved, and the schema's
+own `properties` override). This models OpenAPI object inheritance as one struct per
+type.
+
+```yaml
+Asset:
+  allOf:
+    - $ref: '#/components/schemas/Base'     # id, ...
+    - type: object                          # merged in
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+```
+
+Merging is recursive (a base may itself be an `allOf`). `if`-`then`-`else` and `not`
+are a **generation error**, not silently ignored, so a schema is never compiled into
+a struct that quietly drops the constraint.
+
+## Unions (`oneOf` / `anyOf`)
+
+A **`oneOf`** (or `anyOf`) with a **`discriminator`** becomes a tagged union: a struct
+with one pointer per variant, exactly one set. `oneOf` and `anyOf` are treated the
+same here.
+
+```yaml
+Pet:
+  oneOf:
+    - $ref: '#/components/schemas/Cat'
+    - $ref: '#/components/schemas/Dog'
+  discriminator:
+    propertyName: petType         # the property whose value selects the variant
+    mapping:                      # optional; without it the tag is the schema name
+      cat: '#/components/schemas/Cat'
+      dog: '#/components/schemas/Dog'
+```
+
+- **Decode** reads the object, inspects the discriminator property, and decodes into
+  the matching variant. A missing/unknown discriminator is a decode error.
+- **Encode** writes whichever variant is set.
+- **Validate** recurses into the present variant; a parent references the union like
+  any nested object (`New<Parent>Validator` checks the union field's presence/null,
+  and errors carry the union's path, e.g. `["pet", "lives"]`).
+
+A discriminator is **required**: an undiscriminated `oneOf`/`anyOf` is a generation
+error rather than a fragile try-each-variant decoder. Every variant must reference an
+object schema; with no `mapping`, each variant must be a `$ref` and its schema name is
+the tag.
+
+The one exception is the **`[X, null]` idiom** — a `oneOf`/`anyOf` of a schema and the
+bare `{"type": "null"}` — which collapses to a nullable `X`, decoded exactly like a
+bare `X`.
+
 ## Notes and limitations
 
 - Array **element** failures carry their index in the path, e.g.
   `["tags", "0"]`; the flat report is built from failing `validation.FieldResult`
   values (the path lives on the result, not the error).
-- Directory mode deduplicates types by **name** — two different types with the
-  same name silently collapse (last wins).
-- Not yet handled: `oneOf`/`anyOf`/`allOf`/`if`-`then`-`else`, `enum`/`const` for
-  big-number fields, `minProperties`/`maxProperties`, `dependentRequired`, nested
-  arrays (`array` of `array`), and OpenAPI `paths` request/response bodies (only
-  `components.schemas` is extracted).
+- A property-less `object` is a **generation error** — a closed struct with no
+  fields would silently drop all data (`additionalProperties`/maps are unsupported).
+- Directory mode deduplicates types by **name**: identical definitions merge, but two
+  *differing* types that share a name (or Go type name) are a conflict error.
+- A `oneOf`/`anyOf` needs a `discriminator` (or must be the `[X, null]` idiom);
+  `if`-`then`-`else` and `not` are a **generation error** rather than silently ignored.
+  A union is usable as an array element (validated per element, like an object).
+- Not yet handled: `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
+  (`array` of `array`), big-number array elements, and OpenAPI `paths` request/response
+  bodies (only `components.schemas` is extracted).

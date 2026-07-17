@@ -37,6 +37,11 @@ type Schema struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 
+	// x-esdigo-io flags which generated code this (object) type needs: "in"
+	// (reader + validators), "out" (marshal + writer, no validators), or "" / "both"
+	// (everything). See gen/ir.Direction.
+	IO string `json:"x-esdigo-io"`
+
 	// nullability: OpenAPI 3.0 uses this keyword; JSON Schema 2020-12 / OpenAPI 3.1
 	// use type: [..., "null"] instead. Either marks the value nullable.
 	Nullable bool `json:"nullable"`
@@ -47,6 +52,26 @@ type Schema struct {
 	// object
 	Properties map[string]*Schema `json:"properties"`
 	Required   []string           `json:"required"`
+
+	// composition: allOf merges every subschema's properties and required list into
+	// this one (JSON Schema intersection; OpenAPI uses it for object inheritance).
+	AllOf []*Schema `json:"allOf"`
+
+	// other composition keywords. oneOf/anyOf are unions, if/then/else is
+	// conditional, and not is negation. They are parsed so the generator can reject
+	// the ones it does not yet model with a clear error, rather than silently
+	// dropping the constraint and emitting a struct that ignores it.
+	OneOf []*Schema `json:"oneOf"`
+	AnyOf []*Schema `json:"anyOf"`
+	Not   *Schema   `json:"not"`
+	If    *Schema   `json:"if"`
+	Then  *Schema   `json:"then"`
+	Else  *Schema   `json:"else"`
+
+	// discriminator (OpenAPI): names the property whose value selects a oneOf/anyOf
+	// variant, with an optional value->schema mapping. Its presence turns a
+	// oneOf/anyOf into a generated tagged-union type.
+	Discriminator *Discriminator `json:"discriminator"`
 
 	// named subschemas: "$defs" (2020-12 / OpenAPI 3.1) or "definitions" (draft-07)
 	Defs        map[string]*Schema `json:"$defs"`
@@ -74,6 +99,14 @@ type Schema struct {
 	// any
 	Enum  []json.RawMessage `json:"enum"`
 	Const json.RawMessage   `json:"const"`
+}
+
+// Discriminator is the OpenAPI discriminator object: the property that carries the
+// variant tag, and an optional map from tag value to the variant schema ($ref or a
+// bare schema name).
+type Discriminator struct {
+	PropertyName string            `json:"propertyName"`
+	Mapping      map[string]string `json:"mapping"`
 }
 
 // Parse unmarshals a JSON (or YAML) Schema document.

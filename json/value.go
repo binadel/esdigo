@@ -143,6 +143,25 @@ func (r *Reader) ReadValue() (value Value, result bool) {
 	return value, true
 }
 
+// ReadRawValue skips the next JSON value and returns the exact input bytes it
+// spans (leading whitespace trimmed). It lets a caller defer or re-dispatch the
+// decode of a value — e.g. a discriminated union that must inspect a tag property
+// before choosing which type to decode into. The value is depth-checked as it is
+// skipped, like any other read. The returned slice aliases the reader's input;
+// copy it if it must outlive the buffer.
+func (r *Reader) ReadRawValue() ([]byte, bool) {
+	if r.err != nil {
+		return nil, false
+	}
+
+	r.SkipWhitespace()
+	start := r.pos
+	if !r.SkipValue() {
+		return nil, false
+	}
+	return r.data[start:r.pos], true
+}
+
 // PeekType reports the type of the next JSON value from its first non-whitespace
 // byte, without consuming input. ok is false at end of input or on a byte that
 // cannot begin a JSON value.

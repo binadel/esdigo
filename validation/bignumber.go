@@ -218,3 +218,25 @@ func bigFloatIsMultiple(value, factor *big.Float) bool {
 	}
 	return new(big.Rat).Quo(vr, fr).IsInt()
 }
+
+// BigIntFromString parses a base-10 integer literal into a *big.Int, for building a
+// BigInt validator's bounds (e.g. NewBigInt(...).Min(BigIntFromString("100"))). It
+// panics on a malformed literal — generated code only ever passes a value the
+// generator has already validated.
+func BigIntFromString(s string) *big.Int {
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		panic("validation: invalid big.Int literal: " + s)
+	}
+	return n
+}
+
+// BigFloatFromString parses a decimal float literal into a *big.Float, for building a
+// BigFloat validator's bounds. It panics on a malformed literal.
+func BigFloatFromString(s string) *big.Float {
+	f, ok := new(big.Float).SetString(s)
+	if !ok {
+		panic("validation: invalid big.Float literal: " + s)
+	}
+	return f
+}

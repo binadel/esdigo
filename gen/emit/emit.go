@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -112,13 +113,32 @@ func isStdlib(path string) bool {
 }
 
 func emitMessage(b *bytes.Buffer, m *ir.Message) {
+	if m.Union != nil {
+		emitUnion(b, m)
+		return
+	}
+
 	recv := strings.ToLower(m.Name[:1])
 
 	emitStruct(b, m)
-	emitMarshal(b, m, recv)
-	emitWriteJSON(b, m, recv)
-	emitReadJSON(b, m, recv)
-	emitValidator(b, m, recv)
+	// Order matches the all-directions (Both) output: marshal, unmarshal, write,
+	// read, then validators. An out-only type emits just the writer side, an in-only
+	// type just the reader side and validators.
+	if m.Direction.EmitsWriter() {
+		emitMarshalJSON(b, m, recv)
+	}
+	if m.Direction.EmitsReader() {
+		emitUnmarshalJSON(b, m, recv)
+	}
+	if m.Direction.EmitsWriter() {
+		emitWriteJSON(b, m, recv)
+	}
+	if m.Direction.EmitsReader() {
+		emitReadJSON(b, m, recv)
+	}
+	if m.Direction.EmitsValidator() {
+		emitValidator(b, m, recv)
+	}
 }
 
 func emitStruct(b *bytes.Buffer, m *ir.Message) {
@@ -135,12 +155,14 @@ func emitStruct(b *bytes.Buffer, m *ir.Message) {
 	b.WriteString("}\n\n")
 }
 
-func emitMarshal(b *bytes.Buffer, m *ir.Message, recv string) {
+func emitMarshalJSON(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "func (%s *%s) MarshalJSON() ([]byte, error) {\n", recv, m.Name)
 	b.WriteString("\tw := json.NewWriter(128)\n")
 	fmt.Fprintf(b, "\t%s.WriteJSON(w)\n", recv)
 	b.WriteString("\treturn w.Build()\n}\n\n")
+}
 
+func emitUnmarshalJSON(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "func (%s *%s) UnmarshalJSON(data []byte) error {\n", recv, m.Name)
 	b.WriteString("\tr := json.NewReader(data)\n")
 	fmt.Fprintf(b, "\t%s.ReadJSON(r)\n", recv)
@@ -340,6 +362,152 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 	b.WriteString("}\n\n")
 
 	// Failures: the flat list of failing field results (path + codes) across the tree.
+	fmt.Fprintf(b, "func (v *Validated%s) Failures() []validation.FieldResult {\n", m.Name)
+	b.WriteString("\tvar out []validation.FieldResult\n\tv.Collect(&out)\n\treturn out\n}\n\n")
+}
+
+// emitUnion renders a discriminated-union message: a struct with one pointer per
+// variant (exactly one set), a read that peeks the discriminator and decodes the
+// matching variant, a write that delegates to the set variant, and a validator that
+// recurses into whichever variant is present. Marshal/Unmarshal are the shared
+// wrappers. A parent references the union as an ordinary object field, so its
+// validator API mirrors a struct message's.
+func emitUnion(b *bytes.Buffer, m *ir.Message) {
+	recv := strings.ToLower(m.Name[:1])
+
+	emitUnionStruct(b, m)
+	if m.Direction.EmitsWriter() {
+		emitMarshalJSON(b, m, recv)
+	}
+	if m.Direction.EmitsReader() {
+		emitUnmarshalJSON(b, m, recv)
+	}
+	if m.Direction.EmitsWriter() {
+		emitUnionWriteJSON(b, m, recv)
+	}
+	if m.Direction.EmitsReader() {
+		emitUnionReadJSON(b, m, recv)
+	}
+	if m.Direction.EmitsValidator() {
+		emitUnionValidator(b, m, recv)
+	}
+}
+
+func emitUnionStruct(b *bytes.Buffer, m *ir.Message) {
+	if m.Doc != "" {
+		fmt.Fprintf(b, "// %s %s\n", m.Name, m.Doc)
+	} else {
+		fmt.Fprintf(b, "// %s is a discriminated union.\n", m.Name)
+	}
+	fmt.Fprintf(b, "// Exactly one field is set, selected by the %q property.\n", m.Union.Discriminator)
+	fmt.Fprintf(b, "type %s struct {\n", m.Name)
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\t%s *%s\n", v.GoType, v.GoType)
+	}
+	b.WriteString("}\n\n")
+}
+
+func emitUnionWriteJSON(b *bytes.Buffer, m *ir.Message, recv string) {
+	fmt.Fprintf(b, "func (%s *%s) WriteJSON(w *json.Writer) bool {\n", recv, m.Name)
+	fmt.Fprintf(b, "\tif %s == nil {\n\t\tw.WriteNull()\n\t\treturn true\n\t}\n", recv)
+	b.WriteString("\tswitch {\n")
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\tcase %s.%s != nil:\n\t\treturn %s.%s.WriteJSON(w)\n", recv, v.GoType, recv, v.GoType)
+	}
+	b.WriteString("\t}\n")
+	b.WriteString("\tw.WriteNull()\n\treturn true\n}\n\n")
+}
+
+func emitUnionReadJSON(b *bytes.Buffer, m *ir.Message, recv string) {
+	disc := m.Union.Discriminator
+	fmt.Fprintf(b, "func (%s *%s) ReadJSON(r *json.Reader) bool {\n", recv, m.Name)
+	fmt.Fprintf(b, "\t*%s = %s{}\n", recv, m.Name)
+	// Capture the raw object so the discriminator can be inspected before choosing a
+	// variant, then hand the same bytes to that variant's reader.
+	b.WriteString("\traw, ok := r.ReadRawValue()\n\tif !ok {\n\t\treturn false\n\t}\n")
+	b.WriteString("\tsub := json.NewReader(raw)\n")
+	b.WriteString("\tif sub.ReadNull() {\n\t\treturn true\n\t}\n")
+	b.WriteString("\tobj, ok := sub.ReadObject()\n\tif !ok {\n\t\t")
+	emitSetError(b, m.Name+": a oneOf value must be an object")
+	b.WriteString("\t\treturn false\n\t}\n")
+	fmt.Fprintf(b, "\ttag, ok := obj[%q]\n", disc)
+	b.WriteString("\tif !ok || tag.Type != json.ValueTypeString {\n\t\t")
+	emitSetError(b, m.Name+": missing string discriminator %q", strconv.Quote(disc))
+	b.WriteString("\t\treturn false\n\t}\n")
+	b.WriteString("\tvalue, _ := tag.Payload.(string)\n")
+	b.WriteString("\tswitch value {\n")
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\tcase %q:\n", v.Tag)
+		fmt.Fprintf(b, "\t\t%s.%s = new(%s)\n", recv, v.GoType, v.GoType)
+		fmt.Fprintf(b, "\t\treturn %s.%s.ReadJSON(json.NewReader(raw))\n", recv, v.GoType)
+	}
+	b.WriteString("\t}\n\t")
+	emitSetError(b, m.Name+": unknown discriminator value %q", "value")
+	b.WriteString("\treturn false\n}\n\n")
+}
+
+// emitSetError writes an r.SetSyntaxError call. format is emitted as a Go string
+// literal (so any %q verbs are preserved) and args are Go expressions passed through.
+func emitSetError(b *bytes.Buffer, format string, args ...string) {
+	fmt.Fprintf(b, "r.SetSyntaxError(%s", strconv.Quote(format))
+	for _, a := range args {
+		fmt.Fprintf(b, ", %s", a)
+	}
+	b.WriteString(")\n")
+}
+
+// emitUnionValidator mirrors the struct-message validator API (Validated<T>,
+// <T>Validator, New<T>Validator, Validate, IsValid, Collect, Failures) so a parent
+// can validate a union field exactly like a nested object: the object-level presence
+// result is set by the parent, and validation recurses into the present variant.
+func emitUnionValidator(b *bytes.Buffer, m *ir.Message, recv string) {
+	arg := recv
+	if arg == "v" { // avoid clashing with the validator receiver in Validate
+		arg = "src"
+	}
+
+	fmt.Fprintf(b, "type Validated%s struct {\n", m.Name)
+	fmt.Fprintf(b, "\tObject validation.Result[*%s]\n", m.Name)
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\t%s *Validated%s\n", v.GoType, v.GoType)
+	}
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "type %sValidator struct {\n", m.Name)
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\t%s *%sValidator\n", v.GoType, v.GoType)
+	}
+	b.WriteString("}\n\n")
+
+	fmt.Fprintf(b, "func New%sValidator(base ...string) *%sValidator {\n", m.Name, m.Name)
+	fmt.Fprintf(b, "\treturn &%sValidator{\n", m.Name)
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\t\t%s: New%sValidator(base...),\n", v.GoType, v.GoType)
+	}
+	b.WriteString("\t}\n}\n\n")
+
+	fmt.Fprintf(b, "func (v *%sValidator) Validate(%s *%s) *Validated%s {\n", m.Name, arg, m.Name, m.Name)
+	fmt.Fprintf(b, "\tout := &Validated%s{}\n", m.Name)
+	fmt.Fprintf(b, "\tif %s == nil {\n\t\treturn out\n\t}\n", arg)
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\tif %s.%s != nil {\n\t\tout.%s = v.%s.Validate(%s.%s)\n\t}\n", arg, v.GoType, v.GoType, v.GoType, arg, v.GoType)
+	}
+	b.WriteString("\treturn out\n}\n\n")
+
+	fmt.Fprintf(b, "func (v *Validated%s) IsValid() bool {\n", m.Name)
+	b.WriteString("\tif !v.Object.IsValid() {\n\t\treturn false\n\t}\n")
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\tif v.%s != nil && !v.%s.IsValid() {\n\t\treturn false\n\t}\n", v.GoType, v.GoType)
+	}
+	b.WriteString("\treturn true\n}\n\n")
+
+	fmt.Fprintf(b, "func (v *Validated%s) Collect(out *[]validation.FieldResult) {\n", m.Name)
+	b.WriteString("\tif !v.Object.IsValid() {\n\t\t*out = append(*out, &v.Object)\n\t}\n")
+	for _, v := range m.Union.Variants {
+		fmt.Fprintf(b, "\tif v.%s != nil {\n\t\tv.%s.Collect(out)\n\t}\n", v.GoType, v.GoType)
+	}
+	b.WriteString("}\n\n")
+
 	fmt.Fprintf(b, "func (v *Validated%s) Failures() []validation.FieldResult {\n", m.Name)
 	b.WriteString("\tvar out []validation.FieldResult\n\tv.Collect(&out)\n\treturn out\n}\n\n")
 }

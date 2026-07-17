@@ -8,6 +8,7 @@ package gen
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -109,11 +110,21 @@ func GenerateDirFiles(files map[string][]byte, pkg string) (map[string][]byte, e
 func buildDir(files map[string][]byte, pkg string) (*ir.File, error) {
 	merged := map[string]*schema.Schema{}
 
+	// add merges a named schema, deduping identical definitions but rejecting two
+	// different types that claim the same name (which would silently overwrite).
+	add := func(key string, s *schema.Schema, source string) error {
+		if existing, ok := merged[key]; ok && !reflect.DeepEqual(existing, s) {
+			return fmt.Errorf("conflicting definitions for type %q (redefined in %s)", key, source)
+		}
+		merged[key] = s
+		return nil
+	}
+
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
 	}
-	sort.Strings(names) // deterministic collision resolution across files
+	sort.Strings(names) // deterministic across files
 
 	for _, name := range names {
 		data := files[name]
@@ -123,7 +134,9 @@ func buildDir(files map[string][]byte, pkg string) (*ir.File, error) {
 				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 			for key, s := range doc.Components.Schemas {
-				merged[key] = s
+				if err := add(key, s, name); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
@@ -131,9 +144,14 @@ func buildDir(files map[string][]byte, pkg string) (*ir.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		merged[fileBase(name)] = root // the file root, referenceable as "<file>.json"/".yaml"
+		// the file root, referenceable as "<file>.json"/".yaml"
+		if err := add(fileBase(name), root, name); err != nil {
+			return nil, err
+		}
 		for key, s := range root.AllDefs() {
-			merged[key] = s
+			if err := add(key, s, name); err != nil {
+				return nil, err
+			}
 		}
 	}
 

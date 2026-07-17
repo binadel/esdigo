@@ -218,6 +218,505 @@ func keys(m map[string][]byte) []string {
 	return out
 }
 
+// TestGenerateEnumEscapes: a string enum/const whose JSON spelling uses an escape
+// Go's lexer rejects (\/) is decoded and re-quoted, so generation succeeds and the
+// emitted Go string literal is valid ("application/json", not "application\/json").
+func TestGenerateEnumEscapes(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"kind":{"type":"string","enum":["application\/json","text\/plain"]},
+		"fixed":{"type":"string","const":"a\/b"}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{`.Enum("application/json", "text/plain")`, `.Const("a/b")`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `\/`) {
+		t.Errorf("output still contains an invalid Go escape \\/:\n%s", got)
+	}
+}
+
+// TestGenerateIntegerBounds: numeric bounds on an integer field are emitted as int64
+// literals. A value in float syntax that is integral (1e3) is normalized to 1000; a
+// large integer is preserved exactly; a fractional or out-of-range bound is a clear
+// error rather than code that will not compile.
+func TestGenerateIntegerBounds(t *testing.T) {
+	ok := `{"type":"object","properties":{"n":{"type":"integer","minimum":1e3,"enum":[1,9007199254740993]}}}`
+	out, err := Generate([]byte(ok), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{".Min(1000)", ".Enum(1, 9007199254740993)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+
+	frac := `{"type":"object","properties":{"n":{"type":"integer","minimum":1.5}}}`
+	if _, err := Generate([]byte(frac), "m", "T"); err == nil {
+		t.Errorf("a fractional bound on an integer field should error")
+	}
+	huge := `{"type":"object","properties":{"n":{"type":"integer","maximum":1e19}}}`
+	if _, err := Generate([]byte(huge), "m", "T"); err == nil {
+		t.Errorf("an out-of-int64-range bound should error")
+	}
+}
+
+// TestGenerateFloatBounds: a number (float64) field keeps its JSON bound and enum
+// spelling verbatim — a fractional value is valid Go and must not be rejected.
+func TestGenerateFloatBounds(t *testing.T) {
+	s := `{"type":"object","properties":{"r":{"type":"number","minimum":1.5,"enum":[1.5,2.5,3]}}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{".Min(1.5)", ".Enum(1.5, 2.5, 3)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateNumberFormats: an integer/number "format" selects the Go backing type
+// for the field, its validator, and (for arrays) the specialized array. An absent
+// format keeps the int64/float64 default.
+func TestGenerateNumberFormats(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"small":{"type":"integer","format":"int32"},
+		"count":{"type":"integer","format":"uint16"},
+		"ratio":{"type":"number","format":"float"},
+		"big":{"type":"number","format":"double"},
+		"ids":{"type":"array","items":{"type":"integer","format":"int32"}},
+		"plain":{"type":"integer"}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"*validation.Number[int32]",   // small
+		"*validation.Number[uint16]",  // count
+		"*validation.Number[float32]", // ratio (float)
+		"*validation.Number[float64]", // big (double)
+		"types.Int32Array",            // ids
+		"*validation.ScalarArray[int32]",
+		"*validation.Number[int64]", // plain: default
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateNumberFormatRange: a bound that does not fit the chosen integer type is
+// a clear error; an unrecognized format falls back to the default width (not error).
+func TestGenerateNumberFormatRange(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"int8","maximum":200}}}`), "m", "T"); err == nil {
+		t.Errorf("a bound beyond int8 range should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"uint32","minimum":-1}}}`), "m", "T"); err == nil {
+		t.Errorf("a negative bound on an unsigned field should error")
+	}
+	out, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"widget"}}}`), "m", "T")
+	if err != nil {
+		t.Fatalf("unknown format should not error: %v", err)
+	}
+	if !strings.Contains(string(out), "*validation.Number[int64]") {
+		t.Errorf("unknown integer format should default to int64:\n%s", out)
+	}
+}
+
+// TestGenerateBigNumber: a bigint/big-float format selects the arbitrary-precision
+// wrappers and their dedicated validators, importing math/big for the Result payload.
+// Bounds/const/enum are wrapped in Big{Int,Float}FromString so exact magnitudes beyond
+// int64/float64 survive.
+func TestGenerateBigNumber(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"huge":{"type":"integer","format":"bigint","minimum":0,"const":123456789012345678901234567890},
+		"price":{"type":"number","format":"decimal","minimum":0.01}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"types.BigInt", "types.BigFloat",
+		"*validation.BigInt", "*validation.BigFloat",
+		"validation.Result[*big.Int]", "validation.Result[*big.Float]",
+		`"math/big"`,
+		`.Const(validation.BigIntFromString("123456789012345678901234567890"))`,
+		`.Min(validation.BigFloatFromString("0.01"))`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateBigNumberErrors: a fractional bound on a bigint field, and a big-number
+// array element (which would silently truncate), are both errors.
+func TestGenerateBigNumberErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"bigint","minimum":1.5}}}`), "m", "T"); err == nil {
+		t.Errorf("a fractional bound on a bigint field should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"xs":{"type":"array","items":{"type":"integer","format":"bigint"}}}}`), "m", "T"); err == nil {
+		t.Errorf("a big-number array element should error")
+	}
+}
+
+// TestGenerateRawNumber: a raw format keeps the JSON number as types.RawNumber and
+// validates presence/null only, via validation.RawNumber → Result[[]byte].
+func TestGenerateRawNumber(t *testing.T) {
+	s := `{"type":"object","required":["amount"],"properties":{
+		"amount":{"type":"number","format":"raw"}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"types.RawNumber",
+		"*validation.RawNumber",
+		"validation.Result[[]byte]",
+		`validation.NewRawNumber(validation.SubPath(base, "amount")...).Required().NotNull()`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateRawNumberModelOnly: a raw field with no presence requirement (nullable
+// and optional) needs no validation, so it is a model-only passthrough — present in
+// the struct but absent from the validator.
+func TestGenerateRawNumberModelOnly(t *testing.T) {
+	s := `{"type":"object","properties":{"amount":{"type":["number","null"],"format":"raw"}}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "types.RawNumber") {
+		t.Errorf("missing types.RawNumber:\n%s", got)
+	}
+	if strings.Contains(got, `SubPath(base, "amount")`) {
+		t.Errorf("an unconstrained nullable raw field should be model-only:\n%s", got)
+	}
+}
+
+// TestGenerateRawNumberErrors: a raw number supports presence constraints (required is
+// allowed), but a numeric constraint — or use as an array element — is an error.
+func TestGenerateRawNumberErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","required":["a"],"properties":{"a":{"type":"number","format":"raw"}}}`), "m", "T"); err != nil {
+		t.Errorf("required on a raw field should be allowed: %v", err)
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"a":{"type":"integer","format":"rawnumber","minimum":0}}}`), "m", "T"); err == nil {
+		t.Errorf("a numeric constraint on a raw field should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"a":{"type":"array","items":{"type":"number","format":"raw"}}}}`), "m", "T"); err == nil {
+		t.Errorf("a raw array element should error")
+	}
+}
+
+// TestGenerateDirectionOut: an x-esdigo-io "out" type emits only the marshal + writer
+// — no reader, no validators, and no validation import.
+func TestGenerateDirectionOut(t *testing.T) {
+	s := `{"x-esdigo-io":"out","type":"object","properties":{"id":{"type":"string"}}}`
+	out, err := Generate([]byte(s), "m", "Resp")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"func (r *Resp) MarshalJSON(", "func (r *Resp) WriteJSON("} {
+		if !strings.Contains(got, want) {
+			t.Errorf("out type missing %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"UnmarshalJSON", "ReadJSON", "RespValidator", "ValidatedResp", "esdigo/validation"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("out type should not emit %q:\n%s", absent, got)
+		}
+	}
+}
+
+// TestGenerateDirectionIn: an x-esdigo-io "in" type emits the reader + validators and
+// no writer.
+func TestGenerateDirectionIn(t *testing.T) {
+	s := `{"x-esdigo-io":"in","type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}}}`
+	out, err := Generate([]byte(s), "m", "Req")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"func (r *Req) UnmarshalJSON(", "func (r *Req) ReadJSON(", "type ReqValidator struct", "func NewReqValidator("} {
+		if !strings.Contains(got, want) {
+			t.Errorf("in type missing %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"MarshalJSON", "WriteJSON"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("in type should not emit %q:\n%s", absent, got)
+		}
+	}
+}
+
+// TestGenerateDirectionInlineInherits: an inline child object inherits its parent's
+// direction, so an out parent's nested object is also write-only (no validator).
+func TestGenerateDirectionInlineInherits(t *testing.T) {
+	s := `{"x-esdigo-io":"out","type":"object","properties":{
+		"inner":{"type":"object","properties":{"x":{"type":"string"}}}
+	}}`
+	out, err := Generate([]byte(s), "m", "Root")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "func (r *RootInner) WriteJSON(") {
+		t.Errorf("inline child should emit a writer:\n%s", got)
+	}
+	if strings.Contains(got, "RootInnerValidator") || strings.Contains(got, "func (r *RootInner) ReadJSON(") {
+		t.Errorf("inline child of an out type should inherit out (no validator/reader):\n%s", got)
+	}
+}
+
+func TestGenerateDirectionInvalid(t *testing.T) {
+	s := `{"x-esdigo-io":"sideways","type":"object","properties":{"a":{"type":"string"}}}`
+	if _, err := Generate([]byte(s), "m", "T"); err == nil {
+		t.Errorf("an invalid x-esdigo-io value should error")
+	}
+}
+
+// TestGenerateAllOf flattens an allOf composition: a $ref base plus an inline
+// extension merge their properties, required lists, and formats into one struct.
+func TestGenerateAllOf(t *testing.T) {
+	s := `{
+		"$defs":{"Base":{"type":"object","required":["id"],"properties":{"id":{"type":"string","format":"uuid"}}}},
+		"allOf":[
+			{"$ref":"#/$defs/Base"},
+			{"type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}}}
+		]
+	}`
+	out, err := Generate([]byte(s), "m", "Asset")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"type Asset struct",
+		"type Base struct", // the base is still generated on its own
+		`SubPath(base, "id")...).Required().NotNull().Uuid()`,
+		`SubPath(base, "name")...).Required().NotNull().MinLength(1)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateAllOfRoot: an allOf at the root (no top-level type:object) is still an
+// object; its subschemas merge into the named root struct.
+func TestGenerateAllOfRoot(t *testing.T) {
+	s := `{"allOf":[
+		{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}},
+		{"type":"object","properties":{"n":{"type":"integer"}}}
+	]}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type T struct", "types.String", "types.Int64", `SubPath(base, "id")...).Required()`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateAllOfNested: allOf composition is recursive — a base that is itself an
+// allOf flattens through, and an allOf property becomes an inline merged struct.
+func TestGenerateAllOfNested(t *testing.T) {
+	s := `{"$defs":{
+		"A":{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}},
+		"B":{"allOf":[{"$ref":"#/$defs/A"},{"type":"object","properties":{"b":{"type":"string"}}}]}
+	},"type":"object","properties":{
+		"nested":{"allOf":[{"$ref":"#/$defs/B"},{"type":"object","properties":{"c":{"type":"string"}}}]}
+	}}`
+	out, err := Generate([]byte(s), "m", "Root")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"type RootNested struct", "type B struct", `json:"a"`, `json:"b"`, `json:"c"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateAllOfUnresolvedRef(t *testing.T) {
+	s := `{"allOf":[{"$ref":"#/$defs/Missing"},{"type":"object","properties":{"x":{"type":"string"}}}]}`
+	if _, err := Generate([]byte(s), "m", "T"); err == nil {
+		t.Errorf("allOf with an unresolved $ref should error")
+	}
+}
+
+// TestGenerateUnsupportedComposition: composition keywords the generator does not
+// model (oneOf/anyOf/if-then-else/not) are a clear generation error rather than a
+// struct that silently ignores the constraint — whether on a field or the root.
+func TestGenerateUnsupportedComposition(t *testing.T) {
+	cases := map[string]string{
+		"oneOf field": `{"type":"object","properties":{"x":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}`,
+		"anyOf field": `{"type":"object","properties":{"x":{"anyOf":[{"type":"string"},{"type":"integer"}]}}}`,
+		"not field":   `{"type":"object","properties":{"x":{"not":{"type":"string"}}}}`,
+		"if root":     `{"type":"object","if":{"properties":{"t":{"const":"a"}}},"then":{"required":["a"]},"properties":{"t":{"type":"string"},"a":{"type":"string"}}}`,
+		"oneOf root":  `{"oneOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"string"}}}]}`,
+		"oneOf def":   `{"type":"object","properties":{"x":{"$ref":"#/$defs/U"}},"$defs":{"U":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}`,
+	}
+	for name, s := range cases {
+		if _, err := Generate([]byte(s), "m", "T"); err == nil {
+			t.Errorf("%s: expected an error for unsupported composition", name)
+		}
+	}
+}
+
+// TestGenerateOneOf: a discriminated oneOf becomes a tagged union — a struct with a
+// pointer per variant, a discriminator-driven reader, and a validator that recurses
+// into the present variant. A parent references it as an ordinary object field.
+func TestGenerateOneOf(t *testing.T) {
+	s := `{"type":"object","required":["pet"],"properties":{"pet":{"$ref":"#/$defs/Pet"}},
+		"$defs":{
+			"Pet":{"oneOf":[{"$ref":"#/$defs/Cat"},{"$ref":"#/$defs/Dog"}],
+				"discriminator":{"propertyName":"petType","mapping":{"cat":"#/$defs/Cat","dog":"#/$defs/Dog"}}},
+			"Cat":{"type":"object","properties":{"petType":{"type":"string"},"name":{"type":"string"}}},
+			"Dog":{"type":"object","properties":{"petType":{"type":"string"},"name":{"type":"string"}}}
+		}}`
+	out, err := Generate([]byte(s), "m", "Owner")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"type Pet struct {",
+		"Cat *Cat",
+		"Dog *Dog",
+		"func (p *Pet) ReadJSON(r *json.Reader) bool",
+		"raw, ok := r.ReadRawValue()",
+		`tag, ok := obj["petType"]`,
+		`case "cat":`,
+		"p.Cat = new(Cat)",
+		"func NewPetValidator(base ...string) *PetValidator",
+		"types.Object[Pet, *Pet]", // the parent references the union as an object field
+		`NewPetValidator(validation.SubPath(base, "pet")...)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateOneOfImplicitTags: without a discriminator mapping the tag is each
+// variant's schema name; anyOf is treated like oneOf.
+func TestGenerateOneOfImplicitTags(t *testing.T) {
+	s := `{"type":"object","properties":{"p":{"$ref":"#/$defs/Shape"}},
+		"$defs":{
+			"Shape":{"anyOf":[{"$ref":"#/$defs/Circle"},{"$ref":"#/$defs/Square"}],"discriminator":{"propertyName":"kind"}},
+			"Circle":{"type":"object","properties":{"kind":{"type":"string"}}},
+			"Square":{"type":"object","properties":{"kind":{"type":"string"}}}
+		}}`
+	out, err := Generate([]byte(s), "m", "Doc")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{`case "Circle":`, `case "Square":`, "Circle *Circle", "Square *Square"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateOneOfRoot: a union may be the root type.
+func TestGenerateOneOfRoot(t *testing.T) {
+	s := `{"oneOf":[{"$ref":"#/$defs/Cat"},{"$ref":"#/$defs/Dog"}],"discriminator":{"propertyName":"t"},
+		"$defs":{"Cat":{"type":"object","properties":{"t":{"type":"string"}}},"Dog":{"type":"object","properties":{"t":{"type":"string"}}}}}`
+	out, err := Generate([]byte(s), "m", "Animal")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(string(out), "type Animal struct {") {
+		t.Errorf("root union should generate the named union type:\n%s", out)
+	}
+}
+
+// TestGenerateOneOfArrayElement: a union is usable as an array element, validated
+// per element like an object element (indexed path, recursion into the variant).
+func TestGenerateOneOfArrayElement(t *testing.T) {
+	s := `{"type":"object","properties":{"pets":{"type":"array","items":{"$ref":"#/$defs/Pet"}}},
+		"$defs":{
+			"Pet":{"oneOf":[{"$ref":"#/$defs/Cat"},{"$ref":"#/$defs/Dog"}],"discriminator":{"propertyName":"t"}},
+			"Cat":{"type":"object","properties":{"t":{"type":"string"}}},
+			"Dog":{"type":"object","properties":{"t":{"type":"string"}}}
+		}}`
+	out, err := Generate([]byte(s), "m", "Kennel")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"Pets types.Array[Pet, *Pet]",
+		"PetsItems []*ValidatedPet",
+		"NewPetValidator(p...).Validate(elem)",
+		"type Pet struct {",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateNullableIdiom: "X or null" collapses to a nullable X — the inner type
+// and constraints are kept, but the field is not marked NotNull.
+func TestGenerateNullableIdiom(t *testing.T) {
+	s := `{"type":"object","properties":{"nick":{"oneOf":[{"type":"string","minLength":1},{"type":"null"}]}}}`
+	out, err := Generate([]byte(s), "m", "N")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "Nick types.String") {
+		t.Errorf("nullable idiom should keep the inner type:\n%s", got)
+	}
+	if !strings.Contains(got, `validation.NewString(validation.SubPath(base, "nick")...).MinLength(1)`) {
+		t.Errorf("nullable idiom should keep inner constraints and stay nullable (no NotNull):\n%s", got)
+	}
+}
+
+// TestGenerateOneOfErrors: a union needs a discriminator with a propertyName and
+// object variants that resolve; the implicit form needs $ref variants.
+func TestGenerateOneOfErrors(t *testing.T) {
+	cases := map[string]string{
+		"no propertyName":  `{"oneOf":[{"$ref":"#/$defs/A"}],"discriminator":{},"$defs":{"A":{"type":"object","properties":{"a":{"type":"string"}}}}}`,
+		"non-object arm":   `{"oneOf":[{"$ref":"#/$defs/A"}],"discriminator":{"propertyName":"t"},"$defs":{"A":{"type":"string"}}}`,
+		"unresolved arm":   `{"oneOf":[{"$ref":"#/$defs/Missing"}],"discriminator":{"propertyName":"t"}}`,
+		"implicit non-ref": `{"oneOf":[{"type":"object","properties":{"a":{"type":"string"}}}],"discriminator":{"propertyName":"t"}}`,
+	}
+	for name, s := range cases {
+		if _, err := Generate([]byte(s), "m", "U"); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {
@@ -347,6 +846,53 @@ func TestGenerateNullable30(t *testing.T) {
 func TestGenerateRejectsNonObjectRoot(t *testing.T) {
 	if _, err := Generate([]byte(`{"type":"string"}`), "example", "X"); err == nil {
 		t.Errorf("expected error for non-object root")
+	}
+}
+
+// TestGenerateEmptyObjectErrors: a property-less object would generate a struct that
+// silently drops all data, so it is an error — at the root and when nested.
+func TestGenerateEmptyObjectErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object"}`), "m", "T"); err == nil {
+		t.Errorf("a property-less root object should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"meta":{"type":"object"}}}`), "m", "T"); err == nil {
+		t.Errorf("a property-less nested object should error")
+	}
+}
+
+// TestGenerateGoNameCollision: two $defs whose names normalize to the same Go type
+// name are a conflict when they differ (they would silently overwrite).
+func TestGenerateGoNameCollision(t *testing.T) {
+	s := `{"type":"object","properties":{"x":{"type":"string"}},"$defs":{
+		"user_id":{"type":"object","properties":{"a":{"type":"string"}}},
+		"userId":{"type":"object","properties":{"b":{"type":"integer"}}}
+	}}`
+	if _, err := Generate([]byte(s), "m", "T"); err == nil {
+		t.Errorf("differing schemas that share a Go name should error")
+	}
+}
+
+// TestGenerateDirConflict: two files defining a different type under the same name are
+// a conflict, but identical definitions still dedup.
+func TestGenerateDirConflict(t *testing.T) {
+	conflict := map[string][]byte{
+		"a.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"a":{"type":"string"}}}}}`),
+		"b.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"b":{"type":"integer"}}}}}`),
+	}
+	if _, err := GenerateDir(conflict, "m"); err == nil {
+		t.Errorf("conflicting same-named types across files should error")
+	}
+
+	same := map[string][]byte{
+		"a.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"a":{"type":"string"}}}}}`),
+		"b.json": []byte(`{"$defs":{"Thing":{"type":"object","properties":{"a":{"type":"string"}}}}}`),
+	}
+	out, err := GenerateDir(same, "m")
+	if err != nil {
+		t.Fatalf("identical same-named types should dedup, not error: %v", err)
+	}
+	if n := strings.Count(string(out), "type Thing struct"); n != 1 {
+		t.Errorf("identical Thing should be generated once, got %d", n)
 	}
 }
 
