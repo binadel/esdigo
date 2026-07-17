@@ -429,6 +429,9 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 		if _, ok := bigNumberKind(kind, items.Format); ok {
 			return "", false, nil, fmt.Errorf("big-number array elements (format %q) are not yet supported in %q", items.Format, jsonName)
 		}
+		if rawNumberFormats[items.Format] {
+			return "", false, nil, fmt.Errorf("raw number array elements (format %q) are not yet supported in %q", items.Format, jsonName)
+		}
 		return "types." + numericAlias[numericGoType(kind, items.Format)], false, items, nil
 	case "boolean":
 		return "types.Boolean", false, items, nil
@@ -559,7 +562,18 @@ func buildScalarField(jsonName string, s *schema.Schema, required bool) (*Field,
 		}
 	case "integer", "number":
 		kind := s.Type.Primary()
-		if bigKind, ok := bigNumberKind(kind, s.Format); ok {
+		if rawNumberFormats[s.Format] {
+			if hasValueConstraint(s) {
+				return nil, fmt.Errorf("property %q: a raw number field (format %q) keeps the value verbatim and cannot enforce numeric constraints; remove them or use a concrete numeric format", jsonName, s.Format)
+			}
+			// RawNumber has only a presence/null validator (no value bounds); when the
+			// field needs neither (nullable + optional) it stays a model-only passthrough.
+			f.ModelType = "types.RawNumber"
+			f.ByPointer = true
+			f.ValidatorType = "*validation.RawNumber"
+			f.ResultType = "[]byte"
+			expr = rawNumberExpr(jsonName, required, notNull)
+		} else if bigKind, ok := bigNumberKind(kind, s.Format); ok {
 			f.ModelType = "types." + bigKind
 			f.ByPointer = true
 			f.ValidatorType = "*validation." + bigKind
@@ -718,6 +732,15 @@ func booleanExpr(jsonName string, required, notNull bool, s *schema.Schema) stri
 	return b.String()
 }
 
+// rawNumberExpr builds a RawNumber validator chain — presence and null only; a raw
+// number keeps its value verbatim, so no numeric constraints apply.
+func rawNumberExpr(jsonName string, required, notNull bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "validation.NewRawNumber(%s)", subPath(jsonName))
+	writePresence(&b, required, notNull)
+	return b.String()
+}
+
 func writePresence(b *strings.Builder, required, notNull bool) {
 	if required {
 		b.WriteString(".Required()")
@@ -856,6 +879,11 @@ func numericGoType(kind, format string) string {
 var bigIntFormats = map[string]bool{"bigint": true, "biginteger": true}
 
 var bigFloatFormats = map[string]bool{"bigfloat": true, "bignumber": true, "decimal": true}
+
+// rawNumberFormats select types.RawNumber — the JSON number is preserved as raw bytes.
+// It has a presence/null validator only (validation.RawNumber), so a raw field may be
+// required or non-null but a numeric constraint on it is a generation error.
+var rawNumberFormats = map[string]bool{"raw": true, "rawnumber": true}
 
 // bigNumberKind returns the big-number wrapper ("BigInt"/"BigFloat") a format selects,
 // or ok=false for an ordinary fixed-width type.

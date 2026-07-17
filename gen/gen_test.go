@@ -373,6 +373,61 @@ func TestGenerateBigNumberErrors(t *testing.T) {
 	}
 }
 
+// TestGenerateRawNumber: a raw format keeps the JSON number as types.RawNumber and
+// validates presence/null only, via validation.RawNumber → Result[[]byte].
+func TestGenerateRawNumber(t *testing.T) {
+	s := `{"type":"object","required":["amount"],"properties":{
+		"amount":{"type":"number","format":"raw"}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"types.RawNumber",
+		"*validation.RawNumber",
+		"validation.Result[[]byte]",
+		`validation.NewRawNumber(validation.SubPath(base, "amount")...).Required().NotNull()`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateRawNumberModelOnly: a raw field with no presence requirement (nullable
+// and optional) needs no validation, so it is a model-only passthrough — present in
+// the struct but absent from the validator.
+func TestGenerateRawNumberModelOnly(t *testing.T) {
+	s := `{"type":"object","properties":{"amount":{"type":["number","null"],"format":"raw"}}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "types.RawNumber") {
+		t.Errorf("missing types.RawNumber:\n%s", got)
+	}
+	if strings.Contains(got, `SubPath(base, "amount")`) {
+		t.Errorf("an unconstrained nullable raw field should be model-only:\n%s", got)
+	}
+}
+
+// TestGenerateRawNumberErrors: a raw number supports presence constraints (required is
+// allowed), but a numeric constraint — or use as an array element — is an error.
+func TestGenerateRawNumberErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","required":["a"],"properties":{"a":{"type":"number","format":"raw"}}}`), "m", "T"); err != nil {
+		t.Errorf("required on a raw field should be allowed: %v", err)
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"a":{"type":"integer","format":"rawnumber","minimum":0}}}`), "m", "T"); err == nil {
+		t.Errorf("a numeric constraint on a raw field should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"a":{"type":"array","items":{"type":"number","format":"raw"}}}}`), "m", "T"); err == nil {
+		t.Errorf("a raw array element should error")
+	}
+}
+
 // TestGenerateDirectionOut: an x-esdigo-io "out" type emits only the marshal + writer
 // — no reader, no validators, and no validation import.
 func TestGenerateDirectionOut(t *testing.T) {

@@ -140,6 +140,7 @@ follow:
 | `number` | `double` / `float64` | `float64` | `types.Float64` |
 | `integer` | `bigint` / `biginteger` | `*big.Int` | `types.BigInt` |
 | `number` | `decimal` / `bigfloat` / `bignumber` | `*big.Float` | `types.BigFloat` |
+| `integer` / `number` | `raw` / `rawnumber` | raw JSON bytes | `types.RawNumber` |
 
 The default is `int64` / `float64`. A `minimum`/`maximum`/`enum`/`const` that does not
 fit the chosen fixed-width integer type (out of range, or negative on an unsigned type)
@@ -147,9 +148,14 @@ is a generation error rather than code that won't compile.
 
 The **big-number** formats use the arbitrary-precision `types.BigInt` / `types.BigFloat`
 and their dedicated validators, exact at any magnitude; their bounds and `enum`/`const`
-preserve the literal exactly (values beyond `int64`/`float64` are fine). Big numbers are
-not yet supported as array elements, and the raw-passthrough `types.RawNumber` is not
-exposed (it has no validator).
+preserve the literal exactly (values beyond `int64`/`float64` are fine).
+
+The **raw** formats give `types.RawNumber`, which preserves the JSON number verbatim.
+Because the value is kept as-is, a raw field validates **presence and null only** (via
+`validation.RawNumber`) — `required` and non-null are honored, but a numeric constraint
+(`minimum`/`enum`/`const`/…) is a generation error. A raw field with no presence
+requirement is a model-only passthrough. Big and raw numbers are not yet supported as
+array elements.
 
 Unknown formats are ignored (JSON Schema treats `format` as an annotation).
 
