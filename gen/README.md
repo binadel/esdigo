@@ -271,7 +271,7 @@ bare `X`.
   *differing* types that share a name (or Go type name) are a conflict error.
 - A `oneOf`/`anyOf` needs a `discriminator` (or must be the `[X, null]` idiom);
   `if`-`then`-`else` and `not` are a **generation error** rather than silently ignored.
-  Unions are not yet supported as array elements.
+  A union is usable as an array element (validated per element, like an object).
 - Not yet handled: `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
   (`array` of `array`), big-number array elements, and OpenAPI `paths` request/response
   bodies (only `components.schemas` is extracted).

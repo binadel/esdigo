@@ -622,12 +622,31 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 			}
 			return child, true, target, nil
 		}
+		if isUnionSchema(target) {
+			// A union element behaves like an object element: it validates through
+			// New<Union>Validator, exactly the object-element path below.
+			targetDir, err := directionOf(target)
+			if err != nil {
+				return "", false, nil, err
+			}
+			if err := b.buildUnion(key, target, targetDir); err != nil {
+				return "", false, nil, err
+			}
+			return key, true, target, nil
+		}
 		return b.arrayElem(msgName, jsonName, target, dir)
 	}
 
 	if isObjectSchema(items) {
 		child := msgName + goName(jsonName) + "Item"
 		if err := b.buildMessage(child, items, dir); err != nil {
+			return "", false, nil, err
+		}
+		return child, true, items, nil
+	}
+	if isUnionSchema(items) {
+		child := msgName + goName(jsonName) + "Item"
+		if err := b.buildUnion(child, items, dir); err != nil {
 			return "", false, nil, err
 		}
 		return child, true, items, nil

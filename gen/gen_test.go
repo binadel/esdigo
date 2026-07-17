@@ -658,6 +658,32 @@ func TestGenerateOneOfRoot(t *testing.T) {
 	}
 }
 
+// TestGenerateOneOfArrayElement: a union is usable as an array element, validated
+// per element like an object element (indexed path, recursion into the variant).
+func TestGenerateOneOfArrayElement(t *testing.T) {
+	s := `{"type":"object","properties":{"pets":{"type":"array","items":{"$ref":"#/$defs/Pet"}}},
+		"$defs":{
+			"Pet":{"oneOf":[{"$ref":"#/$defs/Cat"},{"$ref":"#/$defs/Dog"}],"discriminator":{"propertyName":"t"}},
+			"Cat":{"type":"object","properties":{"t":{"type":"string"}}},
+			"Dog":{"type":"object","properties":{"t":{"type":"string"}}}
+		}}`
+	out, err := Generate([]byte(s), "m", "Kennel")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"Pets types.Array[Pet, *Pet]",
+		"PetsItems []*ValidatedPet",
+		"NewPetValidator(p...).Validate(elem)",
+		"type Pet struct {",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestGenerateNullableIdiom: "X or null" collapses to a nullable X — the inner type
 // and constraints are kept, but the field is not marked NotNull.
 func TestGenerateNullableIdiom(t *testing.T) {
