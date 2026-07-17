@@ -334,6 +334,45 @@ func TestGenerateNumberFormatRange(t *testing.T) {
 	}
 }
 
+// TestGenerateBigNumber: a bigint/big-float format selects the arbitrary-precision
+// wrappers and their dedicated validators, importing math/big for the Result payload.
+// Bounds/const/enum are wrapped in Big{Int,Float}FromString so exact magnitudes beyond
+// int64/float64 survive.
+func TestGenerateBigNumber(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"huge":{"type":"integer","format":"bigint","minimum":0,"const":123456789012345678901234567890},
+		"price":{"type":"number","format":"decimal","minimum":0.01}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"types.BigInt", "types.BigFloat",
+		"*validation.BigInt", "*validation.BigFloat",
+		"validation.Result[*big.Int]", "validation.Result[*big.Float]",
+		`"math/big"`,
+		`.Const(validation.BigIntFromString("123456789012345678901234567890"))`,
+		`.Min(validation.BigFloatFromString("0.01"))`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateBigNumberErrors: a fractional bound on a bigint field, and a big-number
+// array element (which would silently truncate), are both errors.
+func TestGenerateBigNumberErrors(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"bigint","minimum":1.5}}}`), "m", "T"); err == nil {
+		t.Errorf("a fractional bound on a bigint field should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"xs":{"type":"array","items":{"type":"integer","format":"bigint"}}}}`), "m", "T"); err == nil {
+		t.Errorf("a big-number array element should error")
+	}
+}
+
 // TestGenerateDirectionOut: an x-esdigo-io "out" type emits only the marshal + writer
 // — no reader, no validators, and no validation import.
 func TestGenerateDirectionOut(t *testing.T) {

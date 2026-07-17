@@ -426,6 +426,9 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 	case "string":
 		return "types.String", false, items, nil
 	case "integer", "number":
+		if _, ok := bigNumberKind(kind, items.Format); ok {
+			return "", false, nil, fmt.Errorf("big-number array elements (format %q) are not yet supported in %q", items.Format, jsonName)
+		}
 		return "types." + numericAlias[numericGoType(kind, items.Format)], false, items, nil
 	case "boolean":
 		return "types.Boolean", false, items, nil
@@ -555,12 +558,22 @@ func buildScalarField(jsonName string, s *schema.Schema, required bool) (*Field,
 			f.Imports = fi.imports
 		}
 	case "integer", "number":
-		goType := numericGoType(s.Type.Primary(), s.Format)
-		f.ModelType = "types." + numericAlias[goType]
-		f.ByPointer = true
-		f.ValidatorType = "*validation.Number[" + goType + "]"
-		f.ResultType = goType
-		expr, err = numberExpr(goType, jsonName, required, notNull, s)
+		kind := s.Type.Primary()
+		if bigKind, ok := bigNumberKind(kind, s.Format); ok {
+			f.ModelType = "types." + bigKind
+			f.ByPointer = true
+			f.ValidatorType = "*validation." + bigKind
+			f.ResultType = bigResultType(bigKind)
+			f.Imports = []string{"math/big"} // the Result[*big.Int]/[*big.Float] payload
+			expr, err = bigNumberExpr(bigKind, jsonName, required, notNull, s)
+		} else {
+			goType := numericGoType(kind, s.Format)
+			f.ModelType = "types." + numericAlias[goType]
+			f.ByPointer = true
+			f.ValidatorType = "*validation.Number[" + goType + "]"
+			f.ResultType = goType
+			expr, err = numberExpr(goType, jsonName, required, notNull, s)
+		}
 	case "boolean":
 		f.ModelType = "types.Boolean"
 		f.ValidatorType = "*validation.Boolean"
@@ -834,6 +847,120 @@ func numericGoType(kind, format string) string {
 		return "float64"
 	}
 	return ""
+}
+
+// bigIntFormats/bigFloatFormats select the arbitrary-precision backings: an integer
+// with a big-int format decodes into *big.Int (types.BigInt), a number with a
+// big-float format into *big.Float (types.BigFloat) — validated exactly at any
+// magnitude by the dedicated validators (not the generic Number[V]).
+var bigIntFormats = map[string]bool{"bigint": true, "biginteger": true}
+
+var bigFloatFormats = map[string]bool{"bigfloat": true, "bignumber": true, "decimal": true}
+
+// bigNumberKind returns the big-number wrapper ("BigInt"/"BigFloat") a format selects,
+// or ok=false for an ordinary fixed-width type.
+func bigNumberKind(kind, format string) (string, bool) {
+	switch kind {
+	case "integer":
+		if bigIntFormats[format] {
+			return "BigInt", true
+		}
+	case "number":
+		if bigFloatFormats[format] {
+			return "BigFloat", true
+		}
+	}
+	return "", false
+}
+
+func bigResultType(bigKind string) string {
+	if bigKind == "BigInt" {
+		return "*big.Int"
+	}
+	return "*big.Float"
+}
+
+// bigNumberExpr builds a BigInt/BigFloat validator chain. Bounds and enum/const are
+// wrapped in validation.Big{Int,Float}FromString so the exact literal survives — a
+// big value cannot be an untyped Go constant.
+func bigNumberExpr(bigKind, jsonName string, required, notNull bool, s *schema.Schema) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "validation.New%s(%s)", bigKind, subPath(jsonName))
+	writePresence(&b, required, notNull)
+
+	bound := func(method string, m json.RawMessage) error {
+		if m == nil {
+			return nil
+		}
+		lit, err := bigLit(bigKind, m)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "%s(%s)", method, lit)
+		return nil
+	}
+	for _, e := range []struct {
+		method string
+		val    json.RawMessage
+	}{
+		{".Min", s.Minimum},
+		{".Max", s.Maximum},
+		{".ExclusiveMin", s.ExclusiveMinimum},
+		{".ExclusiveMax", s.ExclusiveMaximum},
+		{".MultipleOf", s.MultipleOf},
+	} {
+		if err := bound(e.method, e.val); err != nil {
+			return "", err
+		}
+	}
+	if len(s.Enum) > 0 {
+		list, err := joinBig(bigKind, s.Enum)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, ".Enum(%s)", list)
+	}
+	if s.Const != nil {
+		lit, err := bigLit(bigKind, s.Const)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, ".Const(%s)", lit)
+	}
+	return b.String(), nil
+}
+
+// bigLit renders a JSON number as a validation.Big{Int,Float}FromString call. A
+// BigInt value is normalized to its exact decimal integer form (a fractional value is
+// an error); a BigFloat value is validated and passed through verbatim.
+func bigLit(bigKind string, m json.RawMessage) (string, error) {
+	lit := raw(m)
+	if bigKind == "BigInt" {
+		r, ok := new(big.Rat).SetString(lit)
+		if !ok {
+			return "", fmt.Errorf("invalid number %q", lit)
+		}
+		if !r.IsInt() {
+			return "", fmt.Errorf("non-integer bound %q on a bigint field", lit)
+		}
+		return fmt.Sprintf("validation.BigIntFromString(%q)", r.Num().String()), nil
+	}
+	if _, ok := new(big.Float).SetString(lit); !ok {
+		return "", fmt.Errorf("invalid number %q", lit)
+	}
+	return fmt.Sprintf("validation.BigFloatFromString(%q)", lit), nil
+}
+
+func joinBig(bigKind string, values []json.RawMessage) (string, error) {
+	parts := make([]string, len(values))
+	for i, v := range values {
+		lit, err := bigLit(bigKind, v)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = lit
+	}
+	return strings.Join(parts, ", "), nil
 }
 
 // joinStrings renders JSON string values as a comma-separated list of Go string

@@ -138,10 +138,18 @@ follow:
 | `integer` | `int32` / `int64` (OpenAPI), or `int8`…`uint64` / `int` / `uint` | `int32`, `uint16`, … | `types.Int32`, `types.UInt16`, … (`…Array` for arrays) |
 | `number` | `float` / `float32` | `float32` | `types.Float32` |
 | `number` | `double` / `float64` | `float64` | `types.Float64` |
+| `integer` | `bigint` / `biginteger` | `*big.Int` | `types.BigInt` |
+| `number` | `decimal` / `bigfloat` / `bignumber` | `*big.Float` | `types.BigFloat` |
 
 The default is `int64` / `float64`. A `minimum`/`maximum`/`enum`/`const` that does not
-fit the chosen integer type (out of range, or negative on an unsigned type) is a
-generation error rather than code that won't compile.
+fit the chosen fixed-width integer type (out of range, or negative on an unsigned type)
+is a generation error rather than code that won't compile.
+
+The **big-number** formats use the arbitrary-precision `types.BigInt` / `types.BigFloat`
+and their dedicated validators, exact at any magnitude; their bounds and `enum`/`const`
+preserve the literal exactly (values beyond `int64`/`float64` are fine). Big numbers are
+not yet supported as array elements, and the raw-passthrough `types.RawNumber` is not
+exposed (it has no validator).
 
 Unknown formats are ignored (JSON Schema treats `format` as an annotation).
 
@@ -218,7 +226,6 @@ Merging is recursive (a base may itself be an `allOf`). `oneOf` / `anyOf` /
   values (the path lives on the result, not the error).
 - Directory mode deduplicates types by **name** — two different types with the
   same name silently collapse (last wins).
-- Not yet handled: `oneOf`/`anyOf`/`if`-`then`-`else`, `enum`/`const` for big-number
-  fields, `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
-  (`array` of `array`), and OpenAPI `paths` request/response bodies (only
-  `components.schemas` is extracted).
+- Not yet handled: `oneOf`/`anyOf`/`if`-`then`-`else`, `minProperties`/`maxProperties`,
+  `dependentRequired`, nested arrays (`array` of `array`), big-number array elements,
+  and OpenAPI `paths` request/response bodies (only `components.schemas` is extracted).
