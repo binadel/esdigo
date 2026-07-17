@@ -29,8 +29,8 @@ type Message struct {
 	Name      string
 	Doc       string
 	Fields    []*Field
-	Direction Direction // which of the read/write/validate code to emit
-	Imports   []string  // the import set when this message is emitted in its own file
+	Validated bool     // whether to emit validators (x-esdigo-validate; false = produce-only)
+	Imports   []string // the import set when this message is emitted in its own file
 
 	// object-level property-count constraints (JSON Schema minProperties/maxProperties),
 	// checked against the number of present fields.
@@ -57,40 +57,13 @@ type Variant struct {
 	GoType string // the variant's generated message name
 }
 
-// Direction selects which generated code a type needs, from its x-esdigo-io flag.
-// The default (Both) emits everything. Out is a value the program only ever produces
-// (e.g. a response): it emits the marshal + writer and NO reader or validators. In is
-// a value the program only ever receives (e.g. a request): it emits the reader and
-// validators and no writer.
-type Direction int
-
-const (
-	Both Direction = iota
-	In
-	Out
-)
-
-// EmitsWriter reports whether MarshalJSON/WriteJSON are generated (out-capable).
-func (d Direction) EmitsWriter() bool { return d != In }
-
-// EmitsReader reports whether UnmarshalJSON/ReadJSON are generated (in-capable).
-func (d Direction) EmitsReader() bool { return d != Out }
-
-// EmitsValidator reports whether the validator trio is generated (in-capable).
-func (d Direction) EmitsValidator() bool { return d != Out }
-
-// directionOf reads a schema's x-esdigo-io flag.
-func directionOf(s *schema.Schema) (Direction, error) {
-	switch s.IO {
-	case "", "both":
-		return Both, nil
-	case "in":
-		return In, nil
-	case "out":
-		return Out, nil
-	default:
-		return Both, fmt.Errorf("invalid x-esdigo-io %q (want \"in\", \"out\", or \"both\")", s.IO)
-	}
+// validatedOf reports whether a type should get validators, from its
+// x-esdigo-validate flag. Absent (nil) means yes (the default); only an explicit
+// false — a produce-only value the program never validates — turns them off. The
+// model (marshal/write and unmarshal/read) is always generated in either case, so a
+// type stays usable as a nested field regardless of this flag.
+func validatedOf(s *schema.Schema) bool {
+	return s.Validate == nil || *s.Validate
 }
 
 // Field is one property of a Message.
@@ -175,17 +148,14 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	}
 	b := &builder{defs: defs, built: map[string]bool{}}
 
-	dir, err := directionOf(root)
-	if err != nil {
-		return nil, err
-	}
+	validated := validatedOf(root)
 	switch {
 	case isUnionSchema(root):
-		if err := b.buildUnion(goName(name), root, dir); err != nil {
+		if err := b.buildUnion(goName(name), root, validated); err != nil {
 			return nil, err
 		}
 	case isObjectSchema(root):
-		if err := b.buildMessage(goName(name), root, dir); err != nil {
+		if err := b.buildMessage(goName(name), root, validated); err != nil {
 			return nil, err
 		}
 	default:
@@ -225,11 +195,7 @@ func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 // message only where a $ref inlines it).
 func (b *builder) buildNamed(key string, s *schema.Schema) error {
 	if isUnionSchema(s) {
-		dir, err := directionOf(s)
-		if err != nil {
-			return err
-		}
-		return b.buildUnion(key, s, dir)
+		return b.buildUnion(key, s, validatedOf(s))
 	}
 	if err := checkComposition(key, s); err != nil {
 		return err
@@ -237,11 +203,7 @@ func (b *builder) buildNamed(key string, s *schema.Schema) error {
 	if !isObjectSchema(s) {
 		return nil
 	}
-	dir, err := directionOf(s)
-	if err != nil {
-		return err
-	}
-	return b.buildMessage(key, s, dir)
+	return b.buildMessage(key, s, validatedOf(s))
 }
 
 // file assembles the generated File: messages sorted by name (Go allows forward
@@ -337,7 +299,7 @@ func isUnionSchema(s *schema.Schema) bool {
 // buildUnion produces the union message named goName for a discriminated oneOf/anyOf
 // schema s (once). Each variant references an object schema; the discriminator's
 // mapping (or, absent a mapping, each variant's schema name) supplies the tag values.
-func (b *builder) buildUnion(name string, s *schema.Schema, dir Direction) error {
+func (b *builder) buildUnion(name string, s *schema.Schema, validated bool) error {
 	if b.built[name] {
 		return nil
 	}
@@ -348,7 +310,7 @@ func (b *builder) buildUnion(name string, s *schema.Schema, dir Direction) error
 		return fmt.Errorf("union %q: discriminator has no propertyName", name)
 	}
 
-	variants, err := b.unionVariants(name, s, dir)
+	variants, err := b.unionVariants(name, s)
 	if err != nil {
 		return err
 	}
@@ -356,7 +318,7 @@ func (b *builder) buildUnion(name string, s *schema.Schema, dir Direction) error
 	b.messages = append(b.messages, &Message{
 		Name:      name,
 		Doc:       doc(s),
-		Direction: dir,
+		Validated: validated,
 		Union:     &Union{Discriminator: prop, Variants: variants},
 	})
 	return nil
@@ -365,7 +327,7 @@ func (b *builder) buildUnion(name string, s *schema.Schema, dir Direction) error
 // unionVariants resolves a union's variants to generated object messages, building
 // each. With an explicit discriminator mapping the tags come from it; otherwise every
 // member must be a $ref and its schema name is the tag.
-func (b *builder) unionVariants(name string, s *schema.Schema, dir Direction) ([]Variant, error) {
+func (b *builder) unionVariants(name string, s *schema.Schema) ([]Variant, error) {
 	refs := map[string]string{} // tag -> reference (a $ref or a bare schema name)
 	if len(s.Discriminator.Mapping) > 0 {
 		for tag, ref := range s.Discriminator.Mapping {
@@ -412,12 +374,8 @@ func (b *builder) unionVariantType(union, tag, ref string) (string, error) {
 	if !isObjectSchema(sub) {
 		return "", fmt.Errorf("union %q variant %q: %q must reference an object schema", union, tag, ref)
 	}
-	// A variant carries its own direction (default Both), like any shared $ref target.
-	subDir, err := directionOf(sub)
-	if err != nil {
-		return "", err
-	}
-	if err := b.buildMessage(key, sub, subDir); err != nil {
+	// A variant carries its own x-esdigo-validate flag, like any shared $ref target.
+	if err := b.buildMessage(key, sub, validatedOf(sub)); err != nil {
 		return "", err
 	}
 	return key, nil
@@ -467,9 +425,10 @@ func (b *builder) mergeInto(s *schema.Schema, props map[string]*schema.Schema, r
 	return nil
 }
 
-// buildMessage produces the message named goName for object schema s (once). dir is
-// the direction the message inherits (inline children share their parent's).
-func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) error {
+// buildMessage produces the message named goName for object schema s (once).
+// validated is whether this message emits validators (inline children share their
+// parent's flag; a shared $ref target uses its own).
+func (b *builder) buildMessage(name string, s *schema.Schema, validated bool) error {
 	if b.built[name] {
 		return nil
 	}
@@ -487,9 +446,9 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 		return fmt.Errorf("object type %q has no properties; a generated struct would silently drop all data (additionalProperties/maps are not supported)", name)
 	}
 
-	msg := &Message{Name: name, Doc: doc(s), Direction: dir, MinProperties: s.MinProperties, MaxProperties: s.MaxProperties}
+	msg := &Message{Name: name, Doc: doc(s), Validated: validated, MinProperties: s.MinProperties, MaxProperties: s.MaxProperties}
 	for _, jsonName := range sortedKeys(props) {
-		field, err := b.buildField(name, jsonName, props[jsonName], required[jsonName], dir)
+		field, err := b.buildField(name, jsonName, props[jsonName], required[jsonName], validated)
 		if err != nil {
 			return err
 		}
@@ -501,21 +460,21 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 
 // buildField resolves one property. Objects and $refs become types.Object fields
 // (registering / referencing the child message); everything else is a scalar.
-func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
+func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool, validated bool) (*Field, error) {
 	if s.Ref != "" {
-		return b.buildRefField(msgName, jsonName, s, required, dir)
+		return b.buildRefField(msgName, jsonName, s, required, validated)
 	}
 	// "X or null" collapses to a nullable X, decoded exactly like a bare X.
 	if inner := nullableIdiomOf(s); inner != nil {
 		nn := *inner
 		nn.Nullable = true
-		return b.buildField(msgName, jsonName, &nn, required, dir)
+		return b.buildField(msgName, jsonName, &nn, required, validated)
 	}
 	// A discriminated oneOf/anyOf becomes a tagged union type, referenced like an
 	// inline object.
 	if isUnionSchema(s) {
 		child := msgName + goName(jsonName)
-		if err := b.buildUnion(child, s, dir); err != nil {
+		if err := b.buildUnion(child, s, validated); err != nil {
 			return nil, err
 		}
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
@@ -525,7 +484,7 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 	}
 	if isObjectSchema(s) {
 		child := msgName + goName(jsonName)
-		if err := b.buildMessage(child, s, dir); err != nil {
+		if err := b.buildMessage(child, s, validated); err != nil {
 			return nil, err
 		}
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
@@ -533,7 +492,7 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 
 	switch kind := s.Type.Primary(); kind {
 	case "array":
-		return b.buildArrayField(msgName, jsonName, s, required, dir)
+		return b.buildArrayField(msgName, jsonName, s, required, validated)
 	case "string", "integer", "number", "boolean":
 		return buildScalarField(jsonName, s, required)
 	default:
@@ -545,11 +504,11 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 // types.Array[Elem,*Elem] field with an array-level validator (item counts,
 // uniqueness). The element type comes from items; an object element registers a
 // child message. Per-element validation is not composed yet.
-func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
+func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, required bool, validated bool) (*Field, error) {
 	if s.Items == nil {
 		return nil, fmt.Errorf("array property %q has no items schema", jsonName)
 	}
-	elem, elemIsObject, elemSchema, err := b.arrayElem(msgName, jsonName, s.Items, dir)
+	elem, elemIsObject, elemSchema, err := b.arrayElem(msgName, jsonName, s.Items, validated)
 	if err != nil {
 		return nil, err
 	}
@@ -615,7 +574,7 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 // arrayElem returns the Go element type for an array's items schema (a scalar
 // wrapper or a generated child message), whether it is an object, and the
 // resolved items schema (used to build the per-element validator).
-func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir Direction) (elem string, isObject bool, resolved *schema.Schema, err error) {
+func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, validated bool) (elem string, isObject bool, resolved *schema.Schema, err error) {
 	if items.Ref != "" {
 		key := goName(refName(items.Ref))
 		target, ok := b.defs[key]
@@ -624,11 +583,11 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 		}
 		if isObjectSchema(target) {
 			child := key
-			targetDir, err := directionOf(target)
-			if err != nil {
+			targetValidated := validatedOf(target)
+			if err := b.checkRefValidator(validated, targetValidated, child, jsonName); err != nil {
 				return "", false, nil, err
 			}
-			if err := b.buildMessage(child, target, targetDir); err != nil {
+			if err := b.buildMessage(child, target, targetValidated); err != nil {
 				return "", false, nil, err
 			}
 			return child, true, target, nil
@@ -636,28 +595,28 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir 
 		if isUnionSchema(target) {
 			// A union element behaves like an object element: it validates through
 			// New<Union>Validator, exactly the object-element path below.
-			targetDir, err := directionOf(target)
-			if err != nil {
+			targetValidated := validatedOf(target)
+			if err := b.checkRefValidator(validated, targetValidated, key, jsonName); err != nil {
 				return "", false, nil, err
 			}
-			if err := b.buildUnion(key, target, targetDir); err != nil {
+			if err := b.buildUnion(key, target, targetValidated); err != nil {
 				return "", false, nil, err
 			}
 			return key, true, target, nil
 		}
-		return b.arrayElem(msgName, jsonName, target, dir)
+		return b.arrayElem(msgName, jsonName, target, validated)
 	}
 
 	if isObjectSchema(items) {
 		child := msgName + goName(jsonName) + "Item"
-		if err := b.buildMessage(child, items, dir); err != nil {
+		if err := b.buildMessage(child, items, validated); err != nil {
 			return "", false, nil, err
 		}
 		return child, true, items, nil
 	}
 	if isUnionSchema(items) {
 		child := msgName + goName(jsonName) + "Item"
-		if err := b.buildUnion(child, items, dir); err != nil {
+		if err := b.buildUnion(child, items, validated); err != nil {
 			return "", false, nil, err
 		}
 		return child, true, items, nil
@@ -729,7 +688,7 @@ func arrayExprCtor(ctor, jsonName string, required, notNull bool, s *schema.Sche
 
 // buildRefField resolves a $ref: an object target becomes a shared reference to
 // that definition's message; a scalar target is inlined as the field's schema.
-func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
+func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, required bool, validated bool) (*Field, error) {
 	key := goName(refName(s.Ref))
 	target, ok := b.defs[key]
 	if !ok {
@@ -737,31 +696,43 @@ func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, requ
 	}
 	if isUnionSchema(target) {
 		child := key
-		targetDir, err := directionOf(target)
-		if err != nil {
+		targetValidated := validatedOf(target)
+		if err := b.checkRefValidator(validated, targetValidated, child, jsonName); err != nil {
 			return nil, err
 		}
-		if err := b.buildUnion(child, target, targetDir); err != nil {
+		if err := b.buildUnion(child, target, targetValidated); err != nil {
 			return nil, err
 		}
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	}
 	if isObjectSchema(target) {
 		child := key
-		// A shared named target carries its OWN direction (default Both), not the
-		// referrer's — so it stays usable from both inbound and outbound parents.
-		targetDir, err := directionOf(target)
-		if err != nil {
+		// A shared named target carries its OWN x-esdigo-validate flag, not the
+		// referrer's — so it stays usable from every parent that references it.
+		targetValidated := validatedOf(target)
+		if err := b.checkRefValidator(validated, targetValidated, child, jsonName); err != nil {
 			return nil, err
 		}
-		if err := b.buildMessage(child, target, targetDir); err != nil {
+		if err := b.buildMessage(child, target, targetValidated); err != nil {
 			return nil, err
 		}
 		// A bare $ref has no type (notNull); a sibling "type" may relax it to
 		// nullable, e.g. {"type":["object","null"],"$ref":...}.
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	}
-	return b.buildField(msgName, jsonName, target, required, dir)
+	return b.buildField(msgName, jsonName, target, required, validated)
+}
+
+// checkRefValidator rejects a validated parent that nests a non-validated ($ref)
+// child. A parent that emits validators recurses into New<Child>Validator, which a
+// child marked x-esdigo-validate:false does not generate, so the code would not
+// compile — a contradiction: a produce-only type cannot sit inside a value you
+// validate on the way in.
+func (b *builder) checkRefValidator(parentValidated, childValidated bool, child, jsonName string) error {
+	if parentValidated && !childValidated {
+		return fmt.Errorf("property %q references %q, which is x-esdigo-validate:false and has no validator, but its parent is validated; set %q to validate, or mark the parent x-esdigo-validate:false too", jsonName, child, child)
+	}
+	return nil
 }
 
 // objectField builds a types.Object[Child,*Child] field. It always validates: the
@@ -1289,19 +1260,18 @@ func doc(s *schema.Schema) string {
 	return s.Description
 }
 
-// messageImports is the import set for a single message, honoring its direction; the
-// combined file's imports are the union of these across messages. json (marshal/read)
-// is always used, and json/types whenever the struct has fields (its wrappers, incl.
-// types.Object for nested refs). The validator and its field result-type imports are
-// used only when the message emits validators — an out-only, write-only type needs
-// neither. References to sibling types live in the same package, so they need no
-// import.
+// messageImports is the import set for a single message. The combined file's imports
+// are the union of these across messages. json (marshal/read) is always used, and
+// json/types whenever the struct has fields (its wrappers, incl. types.Object for
+// nested refs). The validator and its field result-type imports are used only when
+// the message emits validators — a non-validated type needs neither. References to
+// sibling types live in the same package, so they need no import.
 func messageImports(m *Message) []string {
 	set := map[string]bool{"github.com/binadel/esdigo/json": true}
 	if len(m.Fields) > 0 {
 		set["github.com/binadel/esdigo/json/types"] = true
 	}
-	if m.Direction.EmitsValidator() {
+	if m.Validated {
 		set["github.com/binadel/esdigo/validation"] = true
 		for _, f := range m.Fields {
 			for _, imp := range f.Imports {

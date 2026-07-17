@@ -118,25 +118,17 @@ func emitMessage(b *bytes.Buffer, m *ir.Message) {
 		return
 	}
 
-	recv := strings.ToLower(m.Name[:1])
+	recv := receiverName(m.Name)
 
+	// The model is always emitted in full (marshal, unmarshal, write, read) so a type
+	// is usable as a nested field regardless of its x-esdigo-validate flag; the flag
+	// gates only the validators, which a produce-only type does not need.
 	emitStruct(b, m)
-	// Order matches the all-directions (Both) output: marshal, unmarshal, write,
-	// read, then validators. An out-only type emits just the writer side, an in-only
-	// type just the reader side and validators.
-	if m.Direction.EmitsWriter() {
-		emitMarshalJSON(b, m, recv)
-	}
-	if m.Direction.EmitsReader() {
-		emitUnmarshalJSON(b, m, recv)
-	}
-	if m.Direction.EmitsWriter() {
-		emitWriteJSON(b, m, recv)
-	}
-	if m.Direction.EmitsReader() {
-		emitReadJSON(b, m, recv)
-	}
-	if m.Direction.EmitsValidator() {
+	emitMarshalJSON(b, m, recv)
+	emitUnmarshalJSON(b, m, recv)
+	emitWriteJSON(b, m, recv)
+	emitReadJSON(b, m, recv)
+	if m.Validated {
 		emitValidator(b, m, recv)
 	}
 }
@@ -395,22 +387,16 @@ func emitValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 // wrappers. A parent references the union as an ordinary object field, so its
 // validator API mirrors a struct message's.
 func emitUnion(b *bytes.Buffer, m *ir.Message) {
-	recv := strings.ToLower(m.Name[:1])
+	recv := receiverName(m.Name)
 
+	// Like emitMessage: the model is always emitted in full; the x-esdigo-validate
+	// flag gates only the validators.
 	emitUnionStruct(b, m)
-	if m.Direction.EmitsWriter() {
-		emitMarshalJSON(b, m, recv)
-	}
-	if m.Direction.EmitsReader() {
-		emitUnmarshalJSON(b, m, recv)
-	}
-	if m.Direction.EmitsWriter() {
-		emitUnionWriteJSON(b, m, recv)
-	}
-	if m.Direction.EmitsReader() {
-		emitUnionReadJSON(b, m, recv)
-	}
-	if m.Direction.EmitsValidator() {
+	emitMarshalJSON(b, m, recv)
+	emitUnmarshalJSON(b, m, recv)
+	emitUnionWriteJSON(b, m, recv)
+	emitUnionReadJSON(b, m, recv)
+	if m.Validated {
 		emitUnionValidator(b, m, recv)
 	}
 }
@@ -532,6 +518,23 @@ func emitUnionValidator(b *bytes.Buffer, m *ir.Message, recv string) {
 
 	fmt.Fprintf(b, "func (v *Validated%s) Failures() []validation.FieldResult {\n", m.Name)
 	b.WriteString("\tvar out []validation.FieldResult\n\tv.Collect(&out)\n\treturn out\n}\n\n")
+}
+
+// receiverName is the method receiver for a generated type: the lowercased first
+// letter, as is idiomatic. The only single-letter identifiers in the generated
+// method bodies are the fixed json.Reader "r" and json.Writer "w" parameters, so a
+// type whose name starts with R or W would shadow them (e.g. func (r *Report)
+// ReadJSON(r *json.Reader)). In that case fall back to the first two letters, which
+// cannot collide with those single-letter params or any multi-letter local.
+func receiverName(typeName string) string {
+	recv := strings.ToLower(typeName[:1])
+	if recv != "r" && recv != "w" {
+		return recv
+	}
+	if len(typeName) >= 2 {
+		return strings.ToLower(typeName[:2])
+	}
+	return recv + recv
 }
 
 // objField is the unexported object-level checker field name for an object field,
