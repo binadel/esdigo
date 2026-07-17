@@ -386,18 +386,20 @@ func (b *builder) unionVariantType(union, tag, ref string) (string, error) {
 // subschema is resolved), then the schema's own properties/required override. So a
 // derived type inlines its base's fields — matching esdigo's one-struct-per-type
 // model. A plain object (no allOf) yields its own properties unchanged.
-func (b *builder) mergedObject(s *schema.Schema) (map[string]*schema.Schema, map[string]bool, error) {
-	props := map[string]*schema.Schema{}
-	required := map[string]bool{}
-	if err := b.mergeInto(s, props, required, map[*schema.Schema]bool{}); err != nil {
-		return nil, nil, err
+func (b *builder) mergedObject(s *schema.Schema) (order []string, props map[string]*schema.Schema, required map[string]bool, err error) {
+	props = map[string]*schema.Schema{}
+	required = map[string]bool{}
+	if err := b.mergeInto(s, &order, props, required, map[*schema.Schema]bool{}); err != nil {
+		return nil, nil, nil, err
 	}
-	return props, required, nil
+	return order, props, required, nil
 }
 
 // mergeInto accumulates s's allOf subschemas (base) then s's own properties/required
-// into props/required. seen breaks cycles from a self-referential allOf.
-func (b *builder) mergeInto(s *schema.Schema, props map[string]*schema.Schema, required map[string]bool, seen map[*schema.Schema]bool) error {
+// into props/required, tracking first-seen field order in *order (base fields first,
+// then this schema's own; an override keeps the field's original position). seen
+// breaks cycles from a self-referential allOf.
+func (b *builder) mergeInto(s *schema.Schema, order *[]string, props map[string]*schema.Schema, required map[string]bool, seen map[*schema.Schema]bool) error {
 	if seen[s] {
 		return nil
 	}
@@ -412,12 +414,15 @@ func (b *builder) mergeInto(s *schema.Schema, props map[string]*schema.Schema, r
 			}
 			resolved = target
 		}
-		if err := b.mergeInto(resolved, props, required, seen); err != nil {
+		if err := b.mergeInto(resolved, order, props, required, seen); err != nil {
 			return err
 		}
 	}
-	for name, prop := range s.Properties {
-		props[name] = prop
+	for _, name := range s.PropertyNames() {
+		if _, exists := props[name]; !exists {
+			*order = append(*order, name)
+		}
+		props[name] = s.Properties[name]
 	}
 	for _, name := range s.Required {
 		required[name] = true
@@ -438,7 +443,7 @@ func (b *builder) buildMessage(name string, s *schema.Schema, validated bool) er
 		return err
 	}
 
-	props, required, err := b.mergedObject(s)
+	order, props, required, err := b.mergedObject(s)
 	if err != nil {
 		return err
 	}
@@ -447,7 +452,7 @@ func (b *builder) buildMessage(name string, s *schema.Schema, validated bool) er
 	}
 
 	msg := &Message{Name: name, Doc: doc(s), Validated: validated, MinProperties: s.MinProperties, MaxProperties: s.MaxProperties}
-	for _, jsonName := range sortedKeys(props) {
+	for _, jsonName := range order {
 		field, err := b.buildField(name, jsonName, props[jsonName], required[jsonName], validated)
 		if err != nil {
 			return err

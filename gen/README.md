@@ -6,7 +6,7 @@ generated type reads and writes itself through the `json`/`json/types` packages,
 and its validator maps a decoded value to a typed, path-aware result.
 
 - **Model** — a struct of `json/types` wrappers with `ReadJSON`/`WriteJSON` and
-  `MarshalJSON`/`UnmarshalJSON`.
+  `MarshalJSON`/`UnmarshalJSON`. Fields follow the schema's property order.
 - **Validator** — `New<T>Validator().Validate(&v)` walks the whole object tree
   (nested objects and array elements included) and returns `*Validated<T>`.
 - **Result** — per-field typed values (`r.Email.Value` is a `*mail.Address`), an

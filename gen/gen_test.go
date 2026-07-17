@@ -76,6 +76,31 @@ properties:
 	}
 }
 
+// TestGenerateFieldOrder: struct fields follow the schema's property order, not an
+// alphabetical (map-iteration) sort — for both JSON and YAML input, which must both
+// preserve key order end to end.
+func TestGenerateFieldOrder(t *testing.T) {
+	// Deliberately non-alphabetical so a sort would reorder them.
+	jsonSchema := `{"type":"object","properties":{
+		"zebra":{"type":"string"},
+		"apple":{"type":"integer"},
+		"mango":{"type":"boolean"}
+	}}`
+	yamlSchema := "type: object\nproperties:\n" +
+		"  zebra: { type: string }\n  apple: { type: integer }\n  mango: { type: boolean }\n"
+	for _, in := range []string{jsonSchema, yamlSchema} {
+		out, err := GenerateAuto([]byte(in), "m", "T")
+		if err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+		got := string(out)
+		zebra, apple, mango := strings.Index(got, "Zebra"), strings.Index(got, "Apple"), strings.Index(got, "Mango")
+		if zebra >= apple || apple >= mango {
+			t.Errorf("fields not in schema order (Zebra<Apple<Mango); positions %d,%d,%d:\n%s", zebra, apple, mango, got)
+		}
+	}
+}
+
 // TestGenerateOpenAPIYAML: an OpenAPI document authored in YAML is detected and its
 // components are generated (the common real-world case — specs are usually YAML).
 func TestGenerateOpenAPIYAML(t *testing.T) {

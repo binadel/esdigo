@@ -14,15 +14,15 @@ import (
 
 // Person is a registered person.
 type Person struct {
-	Active    types.Boolean `json:"active"`
-	Age       types.Int64   `json:"age"`
-	Email     types.String  `json:"email"`
 	FirstName types.String  `json:"firstName"`
-	Homepage  types.String  `json:"homepage"`
-	Id        types.String  `json:"id"`
 	LastName  types.String  `json:"lastName"`
-	Role      types.String  `json:"role"`
+	Age       types.Int64   `json:"age"`
 	Score     types.Float64 `json:"score"`
+	Role      types.String  `json:"role"`
+	Active    types.Boolean `json:"active"`
+	Id        types.String  `json:"id"`
+	Email     types.String  `json:"email"`
+	Homepage  types.String  `json:"homepage"`
 }
 
 func (p *Person) MarshalJSON() ([]byte, error) {
@@ -44,62 +44,12 @@ func (p *Person) WriteJSON(w *json.Writer) bool {
 	}
 	needsComma := false
 	w.BeginObject()
-	if p.Active.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"active\":")
-		if !p.Active.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
-	if p.Age.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"age\":")
-		if !p.Age.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
-	if p.Email.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"email\":")
-		if !p.Email.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
 	if p.FirstName.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
 		w.WriteRawString("\"firstName\":")
 		if !p.FirstName.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
-	if p.Homepage.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"homepage\":")
-		if !p.Homepage.WriteJSON(w) {
-			return false
-		}
-		needsComma = true
-	}
-	if p.Id.IsPresent() {
-		if needsComma {
-			w.ValueSeparator()
-		}
-		w.WriteRawString("\"id\":")
-		if !p.Id.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -114,12 +64,12 @@ func (p *Person) WriteJSON(w *json.Writer) bool {
 		}
 		needsComma = true
 	}
-	if p.Role.IsPresent() {
+	if p.Age.IsPresent() {
 		if needsComma {
 			w.ValueSeparator()
 		}
-		w.WriteRawString("\"role\":")
-		if !p.Role.WriteJSON(w) {
+		w.WriteRawString("\"age\":")
+		if !p.Age.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -130,6 +80,56 @@ func (p *Person) WriteJSON(w *json.Writer) bool {
 		}
 		w.WriteRawString("\"score\":")
 		if !p.Score.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Role.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"role\":")
+		if !p.Role.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Active.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"active\":")
+		if !p.Active.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Id.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"id\":")
+		if !p.Id.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Email.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"email\":")
+		if !p.Email.WriteJSON(w) {
+			return false
+		}
+		needsComma = true
+	}
+	if p.Homepage.IsPresent() {
+		if needsComma {
+			w.ValueSeparator()
+		}
+		w.WriteRawString("\"homepage\":")
+		if !p.Homepage.WriteJSON(w) {
 			return false
 		}
 		needsComma = true
@@ -151,24 +151,24 @@ func (p *Person) ReadJSON(r *json.Reader) bool {
 				if r.NameSeparator() {
 					ok := false
 					switch name {
-					case "active":
-						ok = p.Active.ReadJSON(r)
-					case "age":
-						ok = p.Age.ReadJSON(r)
-					case "email":
-						ok = p.Email.ReadJSON(r)
 					case "firstName":
 						ok = p.FirstName.ReadJSON(r)
-					case "homepage":
-						ok = p.Homepage.ReadJSON(r)
-					case "id":
-						ok = p.Id.ReadJSON(r)
 					case "lastName":
 						ok = p.LastName.ReadJSON(r)
-					case "role":
-						ok = p.Role.ReadJSON(r)
+					case "age":
+						ok = p.Age.ReadJSON(r)
 					case "score":
 						ok = p.Score.ReadJSON(r)
+					case "role":
+						ok = p.Role.ReadJSON(r)
+					case "active":
+						ok = p.Active.ReadJSON(r)
+					case "id":
+						ok = p.Id.ReadJSON(r)
+					case "email":
+						ok = p.Email.ReadJSON(r)
+					case "homepage":
+						ok = p.Homepage.ReadJSON(r)
 					default:
 						ok = r.SkipValue()
 					}
@@ -199,40 +199,40 @@ func (p *Person) ReadJSON(r *json.Reader) bool {
 
 type ValidatedPerson struct {
 	Object    validation.Result[*Person]
-	Active    validation.Result[bool]
-	Age       validation.Result[int64]
-	Email     validation.Result[*mail.Address]
 	FirstName validation.Result[string]
-	Homepage  validation.Result[*url.URL]
-	Id        validation.Result[uuid.UUID]
 	LastName  validation.Result[string]
-	Role      validation.Result[string]
+	Age       validation.Result[int64]
 	Score     validation.Result[float64]
+	Role      validation.Result[string]
+	Active    validation.Result[bool]
+	Id        validation.Result[uuid.UUID]
+	Email     validation.Result[*mail.Address]
+	Homepage  validation.Result[*url.URL]
 }
 
 type PersonValidator struct {
-	Active    *validation.Boolean
-	Age       *validation.Number[int64]
-	Email     *validation.Email
 	FirstName *validation.String
-	Homepage  *validation.Uri
-	Id        *validation.Uuid
 	LastName  *validation.String
-	Role      *validation.String
+	Age       *validation.Number[int64]
 	Score     *validation.Number[float64]
+	Role      *validation.String
+	Active    *validation.Boolean
+	Id        *validation.Uuid
+	Email     *validation.Email
+	Homepage  *validation.Uri
 }
 
 func NewPersonValidator(base ...string) *PersonValidator {
 	return &PersonValidator{
-		Active:    validation.NewBoolean(validation.SubPath(base, "active")...).NotNull(),
-		Age:       validation.NewNumber[int64](validation.SubPath(base, "age")...).Required().NotNull().Min(0).Max(150),
-		Email:     validation.NewString(validation.SubPath(base, "email")...).NotNull().MaxLength(254).Email(),
 		FirstName: validation.NewString(validation.SubPath(base, "firstName")...).Required().NotNull().MinLength(1).MaxLength(100),
-		Homepage:  validation.NewString(validation.SubPath(base, "homepage")...).Uri(),
-		Id:        validation.NewString(validation.SubPath(base, "id")...).NotNull().Uuid(),
 		LastName:  validation.NewString(validation.SubPath(base, "lastName")...).MaxLength(100),
-		Role:      validation.NewString(validation.SubPath(base, "role")...).NotNull().Enum("admin", "user", "guest"),
+		Age:       validation.NewNumber[int64](validation.SubPath(base, "age")...).Required().NotNull().Min(0).Max(150),
 		Score:     validation.NewNumber[float64](validation.SubPath(base, "score")...).NotNull().Min(0).MultipleOf(0.5),
+		Role:      validation.NewString(validation.SubPath(base, "role")...).NotNull().Enum("admin", "user", "guest"),
+		Active:    validation.NewBoolean(validation.SubPath(base, "active")...).NotNull(),
+		Id:        validation.NewString(validation.SubPath(base, "id")...).NotNull().Uuid(),
+		Email:     validation.NewString(validation.SubPath(base, "email")...).NotNull().MaxLength(254).Email(),
+		Homepage:  validation.NewString(validation.SubPath(base, "homepage")...).Uri(),
 	}
 }
 
@@ -241,15 +241,15 @@ func (v *PersonValidator) Validate(p *Person) *ValidatedPerson {
 		return &ValidatedPerson{}
 	}
 	out := &ValidatedPerson{}
-	out.Active = v.Active.Validate(p.Active)
-	out.Age = v.Age.Validate(&p.Age)
-	out.Email = v.Email.Validate(p.Email)
 	out.FirstName = v.FirstName.Validate(p.FirstName)
-	out.Homepage = v.Homepage.Validate(p.Homepage)
-	out.Id = v.Id.Validate(p.Id)
 	out.LastName = v.LastName.Validate(p.LastName)
-	out.Role = v.Role.Validate(p.Role)
+	out.Age = v.Age.Validate(&p.Age)
 	out.Score = v.Score.Validate(&p.Score)
+	out.Role = v.Role.Validate(p.Role)
+	out.Active = v.Active.Validate(p.Active)
+	out.Id = v.Id.Validate(p.Id)
+	out.Email = v.Email.Validate(p.Email)
+	out.Homepage = v.Homepage.Validate(p.Homepage)
 	return out
 }
 
@@ -257,31 +257,31 @@ func (v *ValidatedPerson) IsValid() bool {
 	if !v.Object.IsValid() {
 		return false
 	}
-	if !v.Active.IsValid() {
-		return false
-	}
-	if !v.Age.IsValid() {
-		return false
-	}
-	if !v.Email.IsValid() {
-		return false
-	}
 	if !v.FirstName.IsValid() {
-		return false
-	}
-	if !v.Homepage.IsValid() {
-		return false
-	}
-	if !v.Id.IsValid() {
 		return false
 	}
 	if !v.LastName.IsValid() {
 		return false
 	}
-	if !v.Role.IsValid() {
+	if !v.Age.IsValid() {
 		return false
 	}
 	if !v.Score.IsValid() {
+		return false
+	}
+	if !v.Role.IsValid() {
+		return false
+	}
+	if !v.Active.IsValid() {
+		return false
+	}
+	if !v.Id.IsValid() {
+		return false
+	}
+	if !v.Email.IsValid() {
+		return false
+	}
+	if !v.Homepage.IsValid() {
 		return false
 	}
 	return true
@@ -291,32 +291,32 @@ func (v *ValidatedPerson) Collect(out *[]validation.FieldResult) {
 	if !v.Object.IsValid() {
 		*out = append(*out, &v.Object)
 	}
-	if !v.Active.IsValid() {
-		*out = append(*out, &v.Active)
-	}
-	if !v.Age.IsValid() {
-		*out = append(*out, &v.Age)
-	}
-	if !v.Email.IsValid() {
-		*out = append(*out, &v.Email)
-	}
 	if !v.FirstName.IsValid() {
 		*out = append(*out, &v.FirstName)
-	}
-	if !v.Homepage.IsValid() {
-		*out = append(*out, &v.Homepage)
-	}
-	if !v.Id.IsValid() {
-		*out = append(*out, &v.Id)
 	}
 	if !v.LastName.IsValid() {
 		*out = append(*out, &v.LastName)
 	}
-	if !v.Role.IsValid() {
-		*out = append(*out, &v.Role)
+	if !v.Age.IsValid() {
+		*out = append(*out, &v.Age)
 	}
 	if !v.Score.IsValid() {
 		*out = append(*out, &v.Score)
+	}
+	if !v.Role.IsValid() {
+		*out = append(*out, &v.Role)
+	}
+	if !v.Active.IsValid() {
+		*out = append(*out, &v.Active)
+	}
+	if !v.Id.IsValid() {
+		*out = append(*out, &v.Id)
+	}
+	if !v.Email.IsValid() {
+		*out = append(*out, &v.Email)
+	}
+	if !v.Homepage.IsValid() {
+		*out = append(*out, &v.Homepage)
 	}
 }
 
