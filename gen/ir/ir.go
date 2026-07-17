@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -206,7 +208,7 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 	case "array":
 		return b.buildArrayField(msgName, jsonName, s, required)
 	case "string", "integer", "number", "boolean":
-		return buildScalarField(jsonName, s, required), nil
+		return buildScalarField(jsonName, s, required)
 	default:
 		return nil, fmt.Errorf("unsupported type %q for property %q", kind, jsonName)
 	}
@@ -261,7 +263,10 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 		f.ElemItemsType = "*Validated" + elem
 		f.Imports = append(f.Imports, "strconv")
 	} else if hasValueConstraint(elemSchema) {
-		ef := buildScalarField(jsonName, elemSchema, false)
+		ef, err := buildScalarField(jsonName, elemSchema, false)
+		if err != nil {
+			return nil, err
+		}
 		f.ElemValidate = true
 		// Reuse the scalar field's constructor, retargeting its path to the loop's
 		// indexed path variable `p`.
@@ -401,22 +406,24 @@ func subPath(jsonName string) string {
 	return fmt.Sprintf("validation.SubPath(base, %q)...", jsonName)
 }
 
-func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
+func buildScalarField(jsonName string, s *schema.Schema, required bool) (*Field, error) {
 	notNull := !s.IsNullable()
 	f := &Field{GoName: goName(jsonName), JSONName: jsonName, Doc: doc(s)}
 
+	var expr string
+	var err error
 	switch s.Type.Primary() {
 	case "string":
 		f.ModelType = "types.String"
 		f.ValidatorType = "*validation.String"
 		f.ResultType = "string"
-		f.NewExpr = stringExpr(jsonName, required, notNull, s)
+		expr, err = stringExpr(jsonName, required, notNull, s)
 		// A recognized format switches to its specific validator; the base String
 		// constraints already applied above still run before the format check.
 		if fi, ok := formats[s.Format]; ok {
 			f.ValidatorType = fi.validatorType
 			f.ResultType = fi.resultType
-			f.NewExpr += fi.method
+			expr += fi.method
 			f.Imports = fi.imports
 		}
 	case "integer":
@@ -424,22 +431,26 @@ func buildScalarField(jsonName string, s *schema.Schema, required bool) *Field {
 		f.ByPointer = true
 		f.ValidatorType = "*validation.Number[int64]"
 		f.ResultType = "int64"
-		f.NewExpr = numberExpr("int64", jsonName, required, notNull, s)
+		expr, err = numberExpr("int64", jsonName, required, notNull, s)
 	case "number":
 		f.ModelType = "types.Float64"
 		f.ByPointer = true
 		f.ValidatorType = "*validation.Number[float64]"
 		f.ResultType = "float64"
-		f.NewExpr = numberExpr("float64", jsonName, required, notNull, s)
+		expr, err = numberExpr("float64", jsonName, required, notNull, s)
 	case "boolean":
 		f.ModelType = "types.Boolean"
 		f.ValidatorType = "*validation.Boolean"
 		f.ResultType = "bool"
-		f.NewExpr = booleanExpr(jsonName, required, notNull, s)
+		expr = booleanExpr(jsonName, required, notNull, s)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("property %q: %w", jsonName, err)
+	}
+	f.NewExpr = expr
 
 	f.Validate = required || notNull || hasValueConstraint(s)
-	return f
+	return f, nil
 }
 
 // refName is the target name of a $ref. It takes a JSON-pointer fragment's last
@@ -484,7 +495,7 @@ func hasValueConstraint(s *schema.Schema) bool {
 		s.ExclusiveMaximum != nil || s.MultipleOf != nil
 }
 
-func stringExpr(jsonName string, required, notNull bool, s *schema.Schema) string {
+func stringExpr(jsonName string, required, notNull bool, s *schema.Schema) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "validation.NewString(%s)", subPath(jsonName))
 	writePresence(&b, required, notNull)
@@ -498,40 +509,67 @@ func stringExpr(jsonName string, required, notNull bool, s *schema.Schema) strin
 		fmt.Fprintf(&b, ".Pattern(%q)", s.Pattern)
 	}
 	if len(s.Enum) > 0 {
-		fmt.Fprintf(&b, ".Enum(%s)", joinRaw(s.Enum))
+		list, err := joinStrings(s.Enum)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, ".Enum(%s)", list)
 	}
 	if s.Const != nil {
-		fmt.Fprintf(&b, ".Const(%s)", raw(s.Const))
+		lit, err := goString(s.Const)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, ".Const(%s)", lit)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
-func numberExpr(goType, jsonName string, required, notNull bool, s *schema.Schema) string {
+func numberExpr(goType, jsonName string, required, notNull bool, s *schema.Schema) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "validation.NewNumber[%s](%s)", goType, subPath(jsonName))
 	writePresence(&b, required, notNull)
-	if s.Minimum != nil {
-		fmt.Fprintf(&b, ".Min(%s)", raw(s.Minimum))
+
+	bound := func(method string, m json.RawMessage) error {
+		if m == nil {
+			return nil
+		}
+		lit, err := goNumber(goType, m)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "%s(%s)", method, lit)
+		return nil
 	}
-	if s.Maximum != nil {
-		fmt.Fprintf(&b, ".Max(%s)", raw(s.Maximum))
-	}
-	if s.ExclusiveMinimum != nil {
-		fmt.Fprintf(&b, ".ExclusiveMin(%s)", raw(s.ExclusiveMinimum))
-	}
-	if s.ExclusiveMaximum != nil {
-		fmt.Fprintf(&b, ".ExclusiveMax(%s)", raw(s.ExclusiveMaximum))
-	}
-	if s.MultipleOf != nil {
-		fmt.Fprintf(&b, ".MultipleOf(%s)", raw(s.MultipleOf))
+	for _, e := range []struct {
+		method string
+		val    json.RawMessage
+	}{
+		{".Min", s.Minimum},
+		{".Max", s.Maximum},
+		{".ExclusiveMin", s.ExclusiveMinimum},
+		{".ExclusiveMax", s.ExclusiveMaximum},
+		{".MultipleOf", s.MultipleOf},
+	} {
+		if err := bound(e.method, e.val); err != nil {
+			return "", err
+		}
 	}
 	if len(s.Enum) > 0 {
-		fmt.Fprintf(&b, ".Enum(%s)", joinRaw(s.Enum))
+		list, err := joinNumbers(goType, s.Enum)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, ".Enum(%s)", list)
 	}
 	if s.Const != nil {
-		fmt.Fprintf(&b, ".Const(%s)", raw(s.Const))
+		lit, err := goNumber(goType, s.Const)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, ".Const(%s)", lit)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 func booleanExpr(jsonName string, required, notNull bool, s *schema.Schema) string {
@@ -553,18 +591,81 @@ func writePresence(b *strings.Builder, required, notNull bool) {
 	}
 }
 
-// raw renders a JSON literal as a Go literal — for the value types we emit today
-// (numbers, quoted strings, booleans) the JSON and Go spellings coincide.
+// raw renders a JSON literal verbatim as a Go literal. It fits values whose JSON
+// and Go spellings always coincide: booleans, and float64 numbers (JSON number
+// syntax is a subset of Go's float literal syntax). Strings and integer bounds need
+// the escape- and range-aware helpers below.
 func raw(m []byte) string {
 	return string(bytes.TrimSpace(m))
 }
 
-func joinRaw(values []json.RawMessage) string {
+// goString renders a JSON string value as an equivalent Go string literal. JSON
+// permits escapes Go's lexer rejects (notably \/), so the value is decoded and
+// re-quoted rather than emitted verbatim.
+func goString(m json.RawMessage) (string, error) {
+	var s string
+	if err := json.Unmarshal(m, &s); err != nil {
+		return "", err
+	}
+	return strconv.Quote(s), nil
+}
+
+// goNumber renders a JSON number as a Go literal of the target numeric type. A
+// float64 literal is emitted verbatim; an int64 literal is normalized and range-
+// checked (see goInt).
+func goNumber(goType string, m json.RawMessage) (string, error) {
+	if goType == "int64" {
+		return goInt(m)
+	}
+	return raw(m), nil
+}
+
+// goInt renders a JSON number as a Go int64 literal. An integer value is emitted
+// exactly (preserving magnitudes beyond float64 precision); a value written in
+// float syntax is accepted only when it is integral and in range (e.g. 1e3 -> 1000).
+// A fractional or out-of-range bound cannot be represented by an int64 field and is
+// reported as an error rather than emitted as code that will not compile.
+func goInt(m json.RawMessage) (string, error) {
+	lit := raw(m)
+	r, ok := new(big.Rat).SetString(lit)
+	if !ok {
+		return "", fmt.Errorf("invalid number %q", lit)
+	}
+	if !r.IsInt() {
+		return "", fmt.Errorf("non-integer bound %q on an integer field", lit)
+	}
+	if n := r.Num(); n.IsInt64() {
+		return n.String(), nil
+	}
+	return "", fmt.Errorf("bound %q out of range for an int64 field", lit)
+}
+
+// joinStrings renders JSON string values as a comma-separated list of Go string
+// literals (a string field's enum).
+func joinStrings(values []json.RawMessage) (string, error) {
 	parts := make([]string, len(values))
 	for i, v := range values {
-		parts[i] = raw(v)
+		lit, err := goString(v)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = lit
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, ", "), nil
+}
+
+// joinNumbers renders JSON number values as a comma-separated list of Go literals
+// of the target numeric type (a number/integer field's enum).
+func joinNumbers(goType string, values []json.RawMessage) (string, error) {
+	parts := make([]string, len(values))
+	for i, v := range values {
+		lit, err := goNumber(goType, v)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = lit
+	}
+	return strings.Join(parts, ", "), nil
 }
 
 func doc(s *schema.Schema) string {

@@ -1,0 +1,4 @@
+# Normalize line endings to LF for all text files. The code generator and gofmt
+# emit LF, so this keeps generated goldens byte-stable across platforms and avoids
+# spurious diffs on Windows checkouts (core.autocrlf).
+* text=auto eol=lf

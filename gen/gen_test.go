@@ -218,6 +218,72 @@ func keys(m map[string][]byte) []string {
 	return out
 }
 
+// TestGenerateEnumEscapes: a string enum/const whose JSON spelling uses an escape
+// Go's lexer rejects (\/) is decoded and re-quoted, so generation succeeds and the
+// emitted Go string literal is valid ("application/json", not "application\/json").
+func TestGenerateEnumEscapes(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"kind":{"type":"string","enum":["application\/json","text\/plain"]},
+		"fixed":{"type":"string","const":"a\/b"}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{`.Enum("application/json", "text/plain")`, `.Const("a/b")`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `\/`) {
+		t.Errorf("output still contains an invalid Go escape \\/:\n%s", got)
+	}
+}
+
+// TestGenerateIntegerBounds: numeric bounds on an integer field are emitted as int64
+// literals. A value in float syntax that is integral (1e3) is normalized to 1000; a
+// large integer is preserved exactly; a fractional or out-of-range bound is a clear
+// error rather than code that will not compile.
+func TestGenerateIntegerBounds(t *testing.T) {
+	ok := `{"type":"object","properties":{"n":{"type":"integer","minimum":1e3,"enum":[1,9007199254740993]}}}`
+	out, err := Generate([]byte(ok), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{".Min(1000)", ".Enum(1, 9007199254740993)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+
+	frac := `{"type":"object","properties":{"n":{"type":"integer","minimum":1.5}}}`
+	if _, err := Generate([]byte(frac), "m", "T"); err == nil {
+		t.Errorf("a fractional bound on an integer field should error")
+	}
+	huge := `{"type":"object","properties":{"n":{"type":"integer","maximum":1e19}}}`
+	if _, err := Generate([]byte(huge), "m", "T"); err == nil {
+		t.Errorf("an out-of-int64-range bound should error")
+	}
+}
+
+// TestGenerateFloatBounds: a number (float64) field keeps its JSON bound and enum
+// spelling verbatim — a fractional value is valid Go and must not be rejected.
+func TestGenerateFloatBounds(t *testing.T) {
+	s := `{"type":"object","properties":{"r":{"type":"number","minimum":1.5,"enum":[1.5,2.5,3]}}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{".Min(1.5)", ".Enum(1.5, 2.5, 3)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {
