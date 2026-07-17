@@ -27,6 +27,43 @@ func writeThenRead(t *testing.T, v Value) (Value, []byte) {
 	return v2, out
 }
 
+// TestReadRawValue checks that ReadRawValue returns the exact bytes a value spans
+// (leading whitespace trimmed), leaves the reader positioned just after it, and can
+// be re-parsed. This backs discriminated-union decoding, which peeks a tag and then
+// re-reads the captured bytes into the chosen variant.
+func TestReadRawValue(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{`{"a":1}`, `{"a":1}`},
+		{`  {"a": [1, 2], "b": {"c": 3}}  `, `{"a": [1, 2], "b": {"c": 3}}`},
+		{`"x" , 5`, `"x"`},
+		{`123,`, `123`},
+		{`[1,{"k":"}"}] rest`, `[1,{"k":"}"}]`},
+	}
+	for _, tc := range cases {
+		r := NewReader([]byte(tc.in))
+		raw, ok := r.ReadRawValue()
+		if !ok {
+			t.Errorf("ReadRawValue(%q) returned false", tc.in)
+			continue
+		}
+		if string(raw) != tc.want {
+			t.Errorf("ReadRawValue(%q) = %q, want %q", tc.in, raw, tc.want)
+		}
+		// The captured bytes must be valid, re-readable JSON.
+		if _, err := NewReader(raw).ReadJSON(); err != nil {
+			t.Errorf("captured %q is not valid JSON: %v", raw, err)
+		}
+	}
+
+	// A malformed value fails.
+	if _, ok := NewReader([]byte(`{`)).ReadRawValue(); ok {
+		t.Errorf("ReadRawValue on a truncated object should fail")
+	}
+}
+
 func TestWriteValue_RoundTrip_Cases(t *testing.T) {
 	cases := []string{
 		`null`, `true`, `false`,

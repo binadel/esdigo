@@ -589,6 +589,108 @@ func TestGenerateUnsupportedComposition(t *testing.T) {
 	}
 }
 
+// TestGenerateOneOf: a discriminated oneOf becomes a tagged union — a struct with a
+// pointer per variant, a discriminator-driven reader, and a validator that recurses
+// into the present variant. A parent references it as an ordinary object field.
+func TestGenerateOneOf(t *testing.T) {
+	s := `{"type":"object","required":["pet"],"properties":{"pet":{"$ref":"#/$defs/Pet"}},
+		"$defs":{
+			"Pet":{"oneOf":[{"$ref":"#/$defs/Cat"},{"$ref":"#/$defs/Dog"}],
+				"discriminator":{"propertyName":"petType","mapping":{"cat":"#/$defs/Cat","dog":"#/$defs/Dog"}}},
+			"Cat":{"type":"object","properties":{"petType":{"type":"string"},"name":{"type":"string"}}},
+			"Dog":{"type":"object","properties":{"petType":{"type":"string"},"name":{"type":"string"}}}
+		}}`
+	out, err := Generate([]byte(s), "m", "Owner")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"type Pet struct {",
+		"Cat *Cat",
+		"Dog *Dog",
+		"func (p *Pet) ReadJSON(r *json.Reader) bool",
+		"raw, ok := r.ReadRawValue()",
+		`tag, ok := obj["petType"]`,
+		`case "cat":`,
+		"p.Cat = new(Cat)",
+		"func NewPetValidator(base ...string) *PetValidator",
+		"types.Object[Pet, *Pet]", // the parent references the union as an object field
+		`NewPetValidator(validation.SubPath(base, "pet")...)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateOneOfImplicitTags: without a discriminator mapping the tag is each
+// variant's schema name; anyOf is treated like oneOf.
+func TestGenerateOneOfImplicitTags(t *testing.T) {
+	s := `{"type":"object","properties":{"p":{"$ref":"#/$defs/Shape"}},
+		"$defs":{
+			"Shape":{"anyOf":[{"$ref":"#/$defs/Circle"},{"$ref":"#/$defs/Square"}],"discriminator":{"propertyName":"kind"}},
+			"Circle":{"type":"object","properties":{"kind":{"type":"string"}}},
+			"Square":{"type":"object","properties":{"kind":{"type":"string"}}}
+		}}`
+	out, err := Generate([]byte(s), "m", "Doc")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{`case "Circle":`, `case "Square":`, "Circle *Circle", "Square *Square"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateOneOfRoot: a union may be the root type.
+func TestGenerateOneOfRoot(t *testing.T) {
+	s := `{"oneOf":[{"$ref":"#/$defs/Cat"},{"$ref":"#/$defs/Dog"}],"discriminator":{"propertyName":"t"},
+		"$defs":{"Cat":{"type":"object","properties":{"t":{"type":"string"}}},"Dog":{"type":"object","properties":{"t":{"type":"string"}}}}}`
+	out, err := Generate([]byte(s), "m", "Animal")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if !strings.Contains(string(out), "type Animal struct {") {
+		t.Errorf("root union should generate the named union type:\n%s", out)
+	}
+}
+
+// TestGenerateNullableIdiom: "X or null" collapses to a nullable X — the inner type
+// and constraints are kept, but the field is not marked NotNull.
+func TestGenerateNullableIdiom(t *testing.T) {
+	s := `{"type":"object","properties":{"nick":{"oneOf":[{"type":"string","minLength":1},{"type":"null"}]}}}`
+	out, err := Generate([]byte(s), "m", "N")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "Nick types.String") {
+		t.Errorf("nullable idiom should keep the inner type:\n%s", got)
+	}
+	if !strings.Contains(got, `validation.NewString(validation.SubPath(base, "nick")...).MinLength(1)`) {
+		t.Errorf("nullable idiom should keep inner constraints and stay nullable (no NotNull):\n%s", got)
+	}
+}
+
+// TestGenerateOneOfErrors: a union needs a discriminator with a propertyName and
+// object variants that resolve; the implicit form needs $ref variants.
+func TestGenerateOneOfErrors(t *testing.T) {
+	cases := map[string]string{
+		"no propertyName":  `{"oneOf":[{"$ref":"#/$defs/A"}],"discriminator":{},"$defs":{"A":{"type":"object","properties":{"a":{"type":"string"}}}}}`,
+		"non-object arm":   `{"oneOf":[{"$ref":"#/$defs/A"}],"discriminator":{"propertyName":"t"},"$defs":{"A":{"type":"string"}}}`,
+		"unresolved arm":   `{"oneOf":[{"$ref":"#/$defs/Missing"}],"discriminator":{"propertyName":"t"}}`,
+		"implicit non-ref": `{"oneOf":[{"type":"object","properties":{"a":{"type":"string"}}}],"discriminator":{"propertyName":"t"}}`,
+	}
+	for name, s := range cases {
+		if _, err := Generate([]byte(s), "m", "U"); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {

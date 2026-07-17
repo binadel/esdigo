@@ -31,6 +31,25 @@ type Message struct {
 	Fields    []*Field
 	Direction Direction // which of the read/write/validate code to emit
 	Imports   []string  // the import set when this message is emitted in its own file
+
+	// Union, when non-nil, makes this message a discriminated union (a tagged
+	// type selected by a property value) instead of a struct: it has Variants
+	// rather than Fields. A parent still references it as an ordinary object field.
+	Union *Union
+}
+
+// Union describes a discriminated oneOf/anyOf: the property whose value selects a
+// variant, and the variants (each a generated object message) keyed by tag value.
+type Union struct {
+	Discriminator string    // the JSON property carrying the variant tag
+	Variants      []Variant // sorted by tag for deterministic output
+}
+
+// Variant is one arm of a Union: a discriminator value and the object message it
+// decodes to.
+type Variant struct {
+	Tag    string // the discriminator value that selects this variant
+	GoType string // the variant's generated message name
 }
 
 // Direction selects which generated code a type needs, from its x-esdigo-io flag.
@@ -145,10 +164,6 @@ type builder struct {
 // Build resolves a root object schema (plus its $defs and inline nested objects)
 // into a generated file. Each object becomes its own message.
 func Build(pkg, name string, root *schema.Schema) (*File, error) {
-	if !isObjectSchema(root) {
-		return nil, fmt.Errorf("root schema must be an object, got %q", root.Type.Primary())
-	}
-
 	defs, err := normalizeDefs(root.AllDefs())
 	if err != nil {
 		return nil, err
@@ -159,23 +174,21 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.buildMessage(goName(name), root, dir); err != nil {
-		return nil, err
+	switch {
+	case isUnionSchema(root):
+		if err := b.buildUnion(goName(name), root, dir); err != nil {
+			return nil, err
+		}
+	case isObjectSchema(root):
+		if err := b.buildMessage(goName(name), root, dir); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("root schema must be an object or a discriminated oneOf, got %q", root.Type.Primary())
 	}
-	// Emit every object definition too, referenced or not.
+	// Emit every definition too, referenced or not.
 	for _, key := range sortedKeys(b.defs) {
-		s := b.defs[key]
-		if err := checkComposition(key, s); err != nil {
-			return nil, err
-		}
-		if !isObjectSchema(s) {
-			continue
-		}
-		dir, err := directionOf(s)
-		if err != nil {
-			return nil, err
-		}
-		if err := b.buildMessage(key, s, dir); err != nil {
+		if err := b.buildNamed(key, b.defs[key]); err != nil {
 			return nil, err
 		}
 	}
@@ -194,23 +207,36 @@ func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 	b := &builder{defs: defs, built: map[string]bool{}}
 
 	for _, key := range sortedKeys(b.defs) {
-		s := b.defs[key]
-		if err := checkComposition(key, s); err != nil {
-			return nil, err
-		}
-		if !isObjectSchema(s) {
-			continue
-		}
-		dir, err := directionOf(s)
-		if err != nil {
-			return nil, err
-		}
-		if err := b.buildMessage(key, s, dir); err != nil {
+		if err := b.buildNamed(key, b.defs[key]); err != nil {
 			return nil, err
 		}
 	}
 
 	return b.file(pkg), nil
+}
+
+// buildNamed builds the message for one named schema (a $def or component): a
+// discriminated union, an object, or nothing (e.g. a scalar def, which becomes a
+// message only where a $ref inlines it).
+func (b *builder) buildNamed(key string, s *schema.Schema) error {
+	if isUnionSchema(s) {
+		dir, err := directionOf(s)
+		if err != nil {
+			return err
+		}
+		return b.buildUnion(key, s, dir)
+	}
+	if err := checkComposition(key, s); err != nil {
+		return err
+	}
+	if !isObjectSchema(s) {
+		return nil
+	}
+	dir, err := directionOf(s)
+	if err != nil {
+		return err
+	}
+	return b.buildMessage(key, s, dir)
 }
 
 // file assembles the generated File: messages sorted by name (Go allows forward
@@ -241,22 +267,155 @@ func isObjectSchema(s *schema.Schema) bool {
 	return s.Type.Primary() == "" && len(s.AllOf) > 0
 }
 
-// checkComposition rejects the composition keywords the generator does not yet
-// model, so an unsupported oneOf/anyOf/if/not is a clear generation error instead
-// of being silently dropped (which would emit a struct that ignores the
-// constraint). allOf is handled by mergedObject and is intentionally not listed.
+// checkComposition rejects the composition keywords the generator does not model,
+// so an unsupported oneOf/anyOf/if/not is a clear generation error instead of being
+// silently dropped (which would emit a struct that ignores the constraint). allOf is
+// handled by mergedObject, and a discriminated union or the [X, null] nullable idiom
+// are handled by the callers before this point; both are intentionally allowed here.
 func checkComposition(name string, s *schema.Schema) error {
 	switch {
-	case len(s.OneOf) > 0:
-		return fmt.Errorf("schema %q uses oneOf, which is not yet supported", name)
-	case len(s.AnyOf) > 0:
-		return fmt.Errorf("schema %q uses anyOf, which is not yet supported", name)
 	case s.Not != nil:
 		return fmt.Errorf("schema %q uses not, which is not supported", name)
 	case s.If != nil:
 		return fmt.Errorf("schema %q uses if/then/else, which is not yet supported", name)
+	case len(s.OneOf) > 0 || len(s.AnyOf) > 0:
+		if isUnionSchema(s) || nullableIdiomOf(s) != nil {
+			return nil
+		}
+		return fmt.Errorf("schema %q uses oneOf/anyOf that is neither a discriminated union nor the [X, null] nullable form, which is not supported", name)
 	}
 	return nil
+}
+
+// unionMembers returns a schema's oneOf list, or its anyOf list, or nil. oneOf and
+// anyOf are treated the same for codegen: with a discriminator each is a tagged
+// union, and the [X, null] form of either collapses to a nullable X.
+func unionMembers(s *schema.Schema) []*schema.Schema {
+	if len(s.OneOf) > 0 {
+		return s.OneOf
+	}
+	return s.AnyOf
+}
+
+// isNullSchema reports whether m is the bare null schema, {"type":"null"}.
+func isNullSchema(m *schema.Schema) bool {
+	return m.Ref == "" && m.Type.Primary() == "" && m.Type.Nullable() &&
+		len(m.AllOf) == 0 && len(m.OneOf) == 0 && len(m.AnyOf) == 0
+}
+
+// nullableIdiomOf detects the "X or null" idiom — a oneOf/anyOf of exactly two
+// members, one of them the bare null schema — and returns the non-null member (so
+// the field is generated as a nullable X). It returns nil when the shape does not
+// match.
+func nullableIdiomOf(s *schema.Schema) *schema.Schema {
+	members := unionMembers(s)
+	if len(members) != 2 {
+		return nil
+	}
+	switch {
+	case isNullSchema(members[0]) && !isNullSchema(members[1]):
+		return members[1]
+	case isNullSchema(members[1]) && !isNullSchema(members[0]):
+		return members[0]
+	default:
+		return nil
+	}
+}
+
+// isUnionSchema reports whether s is a discriminated union the generator can turn
+// into a tagged type: a oneOf/anyOf with a discriminator, that is not the [X, null]
+// nullable idiom.
+func isUnionSchema(s *schema.Schema) bool {
+	return len(unionMembers(s)) > 0 && s.Discriminator != nil && nullableIdiomOf(s) == nil
+}
+
+// buildUnion produces the union message named goName for a discriminated oneOf/anyOf
+// schema s (once). Each variant references an object schema; the discriminator's
+// mapping (or, absent a mapping, each variant's schema name) supplies the tag values.
+func (b *builder) buildUnion(name string, s *schema.Schema, dir Direction) error {
+	if b.built[name] {
+		return nil
+	}
+	b.built[name] = true
+
+	prop := s.Discriminator.PropertyName
+	if prop == "" {
+		return fmt.Errorf("union %q: discriminator has no propertyName", name)
+	}
+
+	variants, err := b.unionVariants(name, s, dir)
+	if err != nil {
+		return err
+	}
+
+	b.messages = append(b.messages, &Message{
+		Name:      name,
+		Doc:       doc(s),
+		Direction: dir,
+		Union:     &Union{Discriminator: prop, Variants: variants},
+	})
+	return nil
+}
+
+// unionVariants resolves a union's variants to generated object messages, building
+// each. With an explicit discriminator mapping the tags come from it; otherwise every
+// member must be a $ref and its schema name is the tag.
+func (b *builder) unionVariants(name string, s *schema.Schema, dir Direction) ([]Variant, error) {
+	refs := map[string]string{} // tag -> reference (a $ref or a bare schema name)
+	if len(s.Discriminator.Mapping) > 0 {
+		for tag, ref := range s.Discriminator.Mapping {
+			refs[tag] = ref
+		}
+	} else {
+		for _, m := range unionMembers(s) {
+			if m.Ref == "" {
+				return nil, fmt.Errorf("union %q: every variant must be a $ref when the discriminator has no mapping", name)
+			}
+			refs[refName(m.Ref)] = m.Ref
+		}
+	}
+
+	tags := make([]string, 0, len(refs))
+	for tag := range refs {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags) // deterministic output
+
+	variants := make([]Variant, 0, len(tags))
+	for _, tag := range tags {
+		goType, err := b.unionVariantType(name, tag, refs[tag])
+		if err != nil {
+			return nil, err
+		}
+		variants = append(variants, Variant{Tag: tag, GoType: goType})
+	}
+	return variants, nil
+}
+
+// unionVariantType resolves one variant reference (a $ref or bare schema name) to a
+// generated object message, building it, and returns its Go type name.
+func (b *builder) unionVariantType(union, tag, ref string) (string, error) {
+	target := ref
+	if strings.Contains(ref, "/") {
+		target = refName(ref)
+	}
+	key := goName(target)
+	sub, ok := b.defs[key]
+	if !ok {
+		return "", fmt.Errorf("union %q variant %q: unresolved reference %q", union, tag, ref)
+	}
+	if !isObjectSchema(sub) {
+		return "", fmt.Errorf("union %q variant %q: %q must reference an object schema", union, tag, ref)
+	}
+	// A variant carries its own direction (default Both), like any shared $ref target.
+	subDir, err := directionOf(sub)
+	if err != nil {
+		return "", err
+	}
+	if err := b.buildMessage(key, sub, subDir); err != nil {
+		return "", err
+	}
+	return key, nil
 }
 
 // mergedObject flattens an object schema's effective properties and required set,
@@ -340,6 +499,21 @@ func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) err
 func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
 	if s.Ref != "" {
 		return b.buildRefField(msgName, jsonName, s, required, dir)
+	}
+	// "X or null" collapses to a nullable X, decoded exactly like a bare X.
+	if inner := nullableIdiomOf(s); inner != nil {
+		nn := *inner
+		nn.Nullable = true
+		return b.buildField(msgName, jsonName, &nn, required, dir)
+	}
+	// A discriminated oneOf/anyOf becomes a tagged union type, referenced like an
+	// inline object.
+	if isUnionSchema(s) {
+		child := msgName + goName(jsonName)
+		if err := b.buildUnion(child, s, dir); err != nil {
+			return nil, err
+		}
+		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	}
 	if err := checkComposition(jsonName, s); err != nil {
 		return nil, err
@@ -530,6 +704,17 @@ func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, requ
 	target, ok := b.defs[key]
 	if !ok {
 		return nil, fmt.Errorf("unresolved $ref %q for property %q", s.Ref, jsonName)
+	}
+	if isUnionSchema(target) {
+		child := key
+		targetDir, err := directionOf(target)
+		if err != nil {
+			return nil, err
+		}
+		if err := b.buildUnion(child, target, targetDir); err != nil {
+			return nil, err
+		}
+		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	}
 	if isObjectSchema(target) {
 		child := key

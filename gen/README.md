@@ -222,10 +222,43 @@ Asset:
         name: { type: string, minLength: 1 }
 ```
 
-Merging is recursive (a base may itself be an `allOf`). The other composition
-keywords — `oneOf`, `anyOf`, `if`-`then`-`else`, and `not` — are a **generation
-error**, not silently ignored, so a schema is never compiled into a struct that
-quietly drops the constraint.
+Merging is recursive (a base may itself be an `allOf`). `if`-`then`-`else` and `not`
+are a **generation error**, not silently ignored, so a schema is never compiled into
+a struct that quietly drops the constraint.
+
+## Unions (`oneOf` / `anyOf`)
+
+A **`oneOf`** (or `anyOf`) with a **`discriminator`** becomes a tagged union: a struct
+with one pointer per variant, exactly one set. `oneOf` and `anyOf` are treated the
+same here.
+
+```yaml
+Pet:
+  oneOf:
+    - $ref: '#/components/schemas/Cat'
+    - $ref: '#/components/schemas/Dog'
+  discriminator:
+    propertyName: petType         # the property whose value selects the variant
+    mapping:                      # optional; without it the tag is the schema name
+      cat: '#/components/schemas/Cat'
+      dog: '#/components/schemas/Dog'
+```
+
+- **Decode** reads the object, inspects the discriminator property, and decodes into
+  the matching variant. A missing/unknown discriminator is a decode error.
+- **Encode** writes whichever variant is set.
+- **Validate** recurses into the present variant; a parent references the union like
+  any nested object (`New<Parent>Validator` checks the union field's presence/null,
+  and errors carry the union's path, e.g. `["pet", "lives"]`).
+
+A discriminator is **required**: an undiscriminated `oneOf`/`anyOf` is a generation
+error rather than a fragile try-each-variant decoder. Every variant must reference an
+object schema; with no `mapping`, each variant must be a `$ref` and its schema name is
+the tag.
+
+The one exception is the **`[X, null]` idiom** — a `oneOf`/`anyOf` of a schema and the
+bare `{"type": "null"}` — which collapses to a nullable `X`, decoded exactly like a
+bare `X`.
 
 ## Notes and limitations
 
@@ -236,8 +269,9 @@ quietly drops the constraint.
   fields would silently drop all data (`additionalProperties`/maps are unsupported).
 - Directory mode deduplicates types by **name**: identical definitions merge, but two
   *differing* types that share a name (or Go type name) are a conflict error.
-- Composition beyond `allOf` — `oneOf`, `anyOf`, `if`-`then`-`else`, `not` — is a
-  **generation error** rather than silently ignored; support is planned.
+- A `oneOf`/`anyOf` needs a `discriminator` (or must be the `[X, null]` idiom);
+  `if`-`then`-`else` and `not` are a **generation error** rather than silently ignored.
+  Unions are not yet supported as array elements.
 - Not yet handled: `minProperties`/`maxProperties`, `dependentRequired`, nested arrays
   (`array` of `array`), big-number array elements, and OpenAPI `paths` request/response
   bodies (only `components.schemas` is extracted).

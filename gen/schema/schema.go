@@ -68,6 +68,11 @@ type Schema struct {
 	Then  *Schema   `json:"then"`
 	Else  *Schema   `json:"else"`
 
+	// discriminator (OpenAPI): names the property whose value selects a oneOf/anyOf
+	// variant, with an optional value->schema mapping. Its presence turns a
+	// oneOf/anyOf into a generated tagged-union type.
+	Discriminator *Discriminator `json:"discriminator"`
+
 	// named subschemas: "$defs" (2020-12 / OpenAPI 3.1) or "definitions" (draft-07)
 	Defs        map[string]*Schema `json:"$defs"`
 	Definitions map[string]*Schema `json:"definitions"`
@@ -94,6 +99,14 @@ type Schema struct {
 	// any
 	Enum  []json.RawMessage `json:"enum"`
 	Const json.RawMessage   `json:"const"`
+}
+
+// Discriminator is the OpenAPI discriminator object: the property that carries the
+// variant tag, and an optional map from tag value to the variant schema ($ref or a
+// bare schema name).
+type Discriminator struct {
+	PropertyName string            `json:"propertyName"`
+	Mapping      map[string]string `json:"mapping"`
 }
 
 // Parse unmarshals a JSON (or YAML) Schema document.
