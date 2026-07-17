@@ -284,6 +284,124 @@ func TestGenerateFloatBounds(t *testing.T) {
 	}
 }
 
+// TestGenerateNumberFormats: an integer/number "format" selects the Go backing type
+// for the field, its validator, and (for arrays) the specialized array. An absent
+// format keeps the int64/float64 default.
+func TestGenerateNumberFormats(t *testing.T) {
+	s := `{"type":"object","properties":{
+		"small":{"type":"integer","format":"int32"},
+		"count":{"type":"integer","format":"uint16"},
+		"ratio":{"type":"number","format":"float"},
+		"big":{"type":"number","format":"double"},
+		"ids":{"type":"array","items":{"type":"integer","format":"int32"}},
+		"plain":{"type":"integer"}
+	}}`
+	out, err := Generate([]byte(s), "m", "T")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"*validation.Number[int32]",   // small
+		"*validation.Number[uint16]",  // count
+		"*validation.Number[float32]", // ratio (float)
+		"*validation.Number[float64]", // big (double)
+		"types.Int32Array",            // ids
+		"*validation.ScalarArray[int32]",
+		"*validation.Number[int64]", // plain: default
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateNumberFormatRange: a bound that does not fit the chosen integer type is
+// a clear error; an unrecognized format falls back to the default width (not error).
+func TestGenerateNumberFormatRange(t *testing.T) {
+	if _, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"int8","maximum":200}}}`), "m", "T"); err == nil {
+		t.Errorf("a bound beyond int8 range should error")
+	}
+	if _, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"uint32","minimum":-1}}}`), "m", "T"); err == nil {
+		t.Errorf("a negative bound on an unsigned field should error")
+	}
+	out, err := Generate([]byte(`{"type":"object","properties":{"n":{"type":"integer","format":"widget"}}}`), "m", "T")
+	if err != nil {
+		t.Fatalf("unknown format should not error: %v", err)
+	}
+	if !strings.Contains(string(out), "*validation.Number[int64]") {
+		t.Errorf("unknown integer format should default to int64:\n%s", out)
+	}
+}
+
+// TestGenerateDirectionOut: an x-esdigo-io "out" type emits only the marshal + writer
+// — no reader, no validators, and no validation import.
+func TestGenerateDirectionOut(t *testing.T) {
+	s := `{"x-esdigo-io":"out","type":"object","properties":{"id":{"type":"string"}}}`
+	out, err := Generate([]byte(s), "m", "Resp")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"func (r *Resp) MarshalJSON(", "func (r *Resp) WriteJSON("} {
+		if !strings.Contains(got, want) {
+			t.Errorf("out type missing %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"UnmarshalJSON", "ReadJSON", "RespValidator", "ValidatedResp", "esdigo/validation"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("out type should not emit %q:\n%s", absent, got)
+		}
+	}
+}
+
+// TestGenerateDirectionIn: an x-esdigo-io "in" type emits the reader + validators and
+// no writer.
+func TestGenerateDirectionIn(t *testing.T) {
+	s := `{"x-esdigo-io":"in","type":"object","required":["name"],"properties":{"name":{"type":"string","minLength":1}}}`
+	out, err := Generate([]byte(s), "m", "Req")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	for _, want := range []string{"func (r *Req) UnmarshalJSON(", "func (r *Req) ReadJSON(", "type ReqValidator struct", "func NewReqValidator("} {
+		if !strings.Contains(got, want) {
+			t.Errorf("in type missing %q:\n%s", want, got)
+		}
+	}
+	for _, absent := range []string{"MarshalJSON", "WriteJSON"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("in type should not emit %q:\n%s", absent, got)
+		}
+	}
+}
+
+// TestGenerateDirectionInlineInherits: an inline child object inherits its parent's
+// direction, so an out parent's nested object is also write-only (no validator).
+func TestGenerateDirectionInlineInherits(t *testing.T) {
+	s := `{"x-esdigo-io":"out","type":"object","properties":{
+		"inner":{"type":"object","properties":{"x":{"type":"string"}}}
+	}}`
+	out, err := Generate([]byte(s), "m", "Root")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "func (r *RootInner) WriteJSON(") {
+		t.Errorf("inline child should emit a writer:\n%s", got)
+	}
+	if strings.Contains(got, "RootInnerValidator") || strings.Contains(got, "func (r *RootInner) ReadJSON(") {
+		t.Errorf("inline child of an out type should inherit out (no validator/reader):\n%s", got)
+	}
+}
+
+func TestGenerateDirectionInvalid(t *testing.T) {
+	s := `{"x-esdigo-io":"sideways","type":"object","properties":{"a":{"type":"string"}}}`
+	if _, err := Generate([]byte(s), "m", "T"); err == nil {
+		t.Errorf("an invalid x-esdigo-io value should error")
+	}
+}
+
 // TestGenerateOpenAPI checks component extraction, cross-component $ref, and the
 // no-components / detection behavior.
 func TestGenerateOpenAPI(t *testing.T) {

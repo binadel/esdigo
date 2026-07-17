@@ -25,10 +25,47 @@ type File struct {
 
 // Message is one generated struct (and its validator).
 type Message struct {
-	Name    string
-	Doc     string
-	Fields  []*Field
-	Imports []string // the import set when this message is emitted in its own file
+	Name      string
+	Doc       string
+	Fields    []*Field
+	Direction Direction // which of the read/write/validate code to emit
+	Imports   []string  // the import set when this message is emitted in its own file
+}
+
+// Direction selects which generated code a type needs, from its x-esdigo-io flag.
+// The default (Both) emits everything. Out is a value the program only ever produces
+// (e.g. a response): it emits the marshal + writer and NO reader or validators. In is
+// a value the program only ever receives (e.g. a request): it emits the reader and
+// validators and no writer.
+type Direction int
+
+const (
+	Both Direction = iota
+	In
+	Out
+)
+
+// EmitsWriter reports whether MarshalJSON/WriteJSON are generated (out-capable).
+func (d Direction) EmitsWriter() bool { return d != In }
+
+// EmitsReader reports whether UnmarshalJSON/ReadJSON are generated (in-capable).
+func (d Direction) EmitsReader() bool { return d != Out }
+
+// EmitsValidator reports whether the validator trio is generated (in-capable).
+func (d Direction) EmitsValidator() bool { return d != Out }
+
+// directionOf reads a schema's x-esdigo-io flag.
+func directionOf(s *schema.Schema) (Direction, error) {
+	switch s.IO {
+	case "", "both":
+		return Both, nil
+	case "in":
+		return In, nil
+	case "out":
+		return Out, nil
+	default:
+		return Both, fmt.Errorf("invalid x-esdigo-io %q (want \"in\", \"out\", or \"both\")", s.IO)
+	}
 }
 
 // Field is one property of a Message.
@@ -102,7 +139,6 @@ type builder struct {
 	defs     map[string]*schema.Schema
 	messages []*Message
 	built    map[string]bool // message names already produced (dedup)
-	imports  map[string]bool // extra result-type imports
 }
 
 // Build resolves a root object schema (plus its $defs and inline nested objects)
@@ -113,20 +149,29 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 	}
 
 	b := &builder{
-		defs:    normalizeDefs(root.AllDefs()),
-		built:   map[string]bool{},
-		imports: map[string]bool{},
+		defs:  normalizeDefs(root.AllDefs()),
+		built: map[string]bool{},
 	}
 
-	if err := b.buildMessage(goName(name), root); err != nil {
+	dir, err := directionOf(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.buildMessage(goName(name), root, dir); err != nil {
 		return nil, err
 	}
 	// Emit every object definition too, referenced or not.
 	for _, key := range sortedKeys(b.defs) {
-		if b.defs[key].Type.Primary() == "object" {
-			if err := b.buildMessage(key, b.defs[key]); err != nil {
-				return nil, err
-			}
+		s := b.defs[key]
+		if s.Type.Primary() != "object" {
+			continue
+		}
+		dir, err := directionOf(s)
+		if err != nil {
+			return nil, err
+		}
+		if err := b.buildMessage(key, s, dir); err != nil {
+			return nil, err
 		}
 	}
 
@@ -138,16 +183,21 @@ func Build(pkg, name string, root *schema.Schema) (*File, error) {
 // the whole set. Non-object schemas become messages only where a ref inlines them.
 func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 	b := &builder{
-		defs:    normalizeDefs(schemas),
-		built:   map[string]bool{},
-		imports: map[string]bool{},
+		defs:  normalizeDefs(schemas),
+		built: map[string]bool{},
 	}
 
 	for _, key := range sortedKeys(b.defs) {
-		if b.defs[key].Type.Primary() == "object" {
-			if err := b.buildMessage(key, b.defs[key]); err != nil {
-				return nil, err
-			}
+		s := b.defs[key]
+		if s.Type.Primary() != "object" {
+			continue
+		}
+		dir, err := directionOf(s)
+		if err != nil {
+			return nil, err
+		}
+		if err := b.buildMessage(key, s, dir); err != nil {
+			return nil, err
 		}
 	}
 
@@ -159,31 +209,33 @@ func BuildAll(pkg string, schemas map[string]*schema.Schema) (*File, error) {
 // message's own import set for per-file (split) output.
 func (b *builder) file(pkg string) *File {
 	sort.Slice(b.messages, func(i, j int) bool { return b.messages[i].Name < b.messages[j].Name })
+	fileImports := map[string]bool{}
 	for _, m := range b.messages {
 		m.Imports = messageImports(m)
+		for _, imp := range m.Imports {
+			fileImports[imp] = true
+		}
 	}
 	return &File{
 		Package:  pkg,
-		Imports:  buildImports(b.imports),
+		Imports:  sortedImports(fileImports),
 		Messages: b.messages,
 	}
 }
 
-// buildMessage produces the message named goName for object schema s (once).
-func (b *builder) buildMessage(name string, s *schema.Schema) error {
+// buildMessage produces the message named goName for object schema s (once). dir is
+// the direction the message inherits (inline children share their parent's).
+func (b *builder) buildMessage(name string, s *schema.Schema, dir Direction) error {
 	if b.built[name] {
 		return nil
 	}
 	b.built[name] = true
 
-	msg := &Message{Name: name, Doc: doc(s)}
+	msg := &Message{Name: name, Doc: doc(s), Direction: dir}
 	for _, jsonName := range sortedKeys(s.Properties) {
-		field, err := b.buildField(name, jsonName, s.Properties[jsonName], s.IsRequired(jsonName))
+		field, err := b.buildField(name, jsonName, s.Properties[jsonName], s.IsRequired(jsonName), dir)
 		if err != nil {
 			return err
-		}
-		for _, imp := range field.Imports {
-			b.imports[imp] = true
 		}
 		msg.Fields = append(msg.Fields, field)
 	}
@@ -193,20 +245,20 @@ func (b *builder) buildMessage(name string, s *schema.Schema) error {
 
 // buildField resolves one property. Objects and $refs become types.Object fields
 // (registering / referencing the child message); everything else is a scalar.
-func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
+func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
 	if s.Ref != "" {
-		return b.buildRefField(msgName, jsonName, s, required)
+		return b.buildRefField(msgName, jsonName, s, required, dir)
 	}
 
 	switch kind := s.Type.Primary(); kind {
 	case "object":
 		child := msgName + goName(jsonName)
-		if err := b.buildMessage(child, s); err != nil {
+		if err := b.buildMessage(child, s, dir); err != nil {
 			return nil, err
 		}
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	case "array":
-		return b.buildArrayField(msgName, jsonName, s, required)
+		return b.buildArrayField(msgName, jsonName, s, required, dir)
 	case "string", "integer", "number", "boolean":
 		return buildScalarField(jsonName, s, required)
 	default:
@@ -218,11 +270,11 @@ func (b *builder) buildField(msgName, jsonName string, s *schema.Schema, require
 // types.Array[Elem,*Elem] field with an array-level validator (item counts,
 // uniqueness). The element type comes from items; an object element registers a
 // child message. Per-element validation is not composed yet.
-func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
+func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
 	if s.Items == nil {
 		return nil, fmt.Errorf("array property %q has no items schema", jsonName)
 	}
-	elem, elemIsObject, elemSchema, err := b.arrayElem(msgName, jsonName, s.Items)
+	elem, elemIsObject, elemSchema, err := b.arrayElem(msgName, jsonName, s.Items, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -233,13 +285,13 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 	// Lean path: a scalar element with no per-element constraints uses the unboxed
 	// specialized array + ScalarArray validator (no boxing, direct-comparison
 	// uniqueness). Everything else uses the generic array.
-	if lean, ok := leanArrays[elemSchema.Type.Primary()]; ok && !elemIsObject && !hasValueConstraint(elemSchema) {
-		f.ModelType = lean.array
+	if leanArray, leanElem, ok := leanArrayFor(elemSchema); ok && !elemIsObject && !hasValueConstraint(elemSchema) {
+		f.ModelType = leanArray
 		f.Validate = required || notNull || hasArrayConstraint(s)
 		if f.Validate {
-			f.ValidatorType = fmt.Sprintf("*validation.ScalarArray[%s]", lean.elem)
-			f.ResultType = "[]" + lean.elem
-			f.NewExpr = scalarArrayExpr(lean.elem, jsonName, required, notNull, s)
+			f.ValidatorType = fmt.Sprintf("*validation.ScalarArray[%s]", leanElem)
+			f.ResultType = "[]" + leanElem
+			f.NewExpr = scalarArrayExpr(leanElem, jsonName, required, notNull, s)
 			f.ByPointer = true // ScalarArray.Validate takes the wrapper as an interface
 		}
 		return f, nil
@@ -282,7 +334,7 @@ func (b *builder) buildArrayField(msgName, jsonName string, s *schema.Schema, re
 // arrayElem returns the Go element type for an array's items schema (a scalar
 // wrapper or a generated child message), whether it is an object, and the
 // resolved items schema (used to build the per-element validator).
-func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema) (elem string, isObject bool, resolved *schema.Schema, err error) {
+func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema, dir Direction) (elem string, isObject bool, resolved *schema.Schema, err error) {
 	if items.Ref != "" {
 		key := goName(refName(items.Ref))
 		target, ok := b.defs[key]
@@ -291,26 +343,28 @@ func (b *builder) arrayElem(msgName, jsonName string, items *schema.Schema) (ele
 		}
 		if target.Type.Primary() == "object" {
 			child := key
-			if err := b.buildMessage(child, target); err != nil {
+			targetDir, err := directionOf(target)
+			if err != nil {
+				return "", false, nil, err
+			}
+			if err := b.buildMessage(child, target, targetDir); err != nil {
 				return "", false, nil, err
 			}
 			return child, true, target, nil
 		}
-		return b.arrayElem(msgName, jsonName, target)
+		return b.arrayElem(msgName, jsonName, target, dir)
 	}
 
 	switch kind := items.Type.Primary(); kind {
 	case "string":
 		return "types.String", false, items, nil
-	case "integer":
-		return "types.Int64", false, items, nil
-	case "number":
-		return "types.Float64", false, items, nil
+	case "integer", "number":
+		return "types." + numericAlias[numericGoType(kind, items.Format)], false, items, nil
 	case "boolean":
 		return "types.Boolean", false, items, nil
 	case "object":
 		child := msgName + goName(jsonName) + "Item"
-		if err := b.buildMessage(child, items); err != nil {
+		if err := b.buildMessage(child, items, dir); err != nil {
 			return "", false, nil, err
 		}
 		return child, true, items, nil
@@ -323,13 +377,20 @@ func hasArrayConstraint(s *schema.Schema) bool {
 	return s.MinItems != nil || s.MaxItems != nil || s.UniqueItems
 }
 
-// leanArrays maps a scalar element type to the unboxed specialized array model and
-// its Go element type, for the lean scalar-array path.
-var leanArrays = map[string]struct{ array, elem string }{
-	"string":  {"types.StringArray", "string"},
-	"integer": {"types.Int64Array", "int64"},
-	"number":  {"types.Float64Array", "float64"},
-	"boolean": {"types.BooleanArray", "bool"},
+// leanArrayFor maps a scalar element schema to the unboxed specialized array model
+// and its Go element type, for the lean scalar-array path. Integer/number honor the
+// element's numeric format (e.g. []int32 -> types.Int32Array).
+func leanArrayFor(s *schema.Schema) (arrayModel, elem string, ok bool) {
+	switch kind := s.Type.Primary(); kind {
+	case "string":
+		return "types.StringArray", "string", true
+	case "boolean":
+		return "types.BooleanArray", "bool", true
+	case "integer", "number":
+		goType := numericGoType(kind, s.Format)
+		return "types." + numericAlias[goType] + "Array", goType, true
+	}
+	return "", "", false
 }
 
 func arrayExpr(elem, jsonName string, required, notNull bool, s *schema.Schema) string {
@@ -360,7 +421,7 @@ func arrayExprCtor(ctor, jsonName string, required, notNull bool, s *schema.Sche
 
 // buildRefField resolves a $ref: an object target becomes a shared reference to
 // that definition's message; a scalar target is inlined as the field's schema.
-func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, required bool) (*Field, error) {
+func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, required bool, dir Direction) (*Field, error) {
 	key := goName(refName(s.Ref))
 	target, ok := b.defs[key]
 	if !ok {
@@ -368,14 +429,20 @@ func (b *builder) buildRefField(msgName, jsonName string, s *schema.Schema, requ
 	}
 	if target.Type.Primary() == "object" {
 		child := key
-		if err := b.buildMessage(child, target); err != nil {
+		// A shared named target carries its OWN direction (default Both), not the
+		// referrer's — so it stays usable from both inbound and outbound parents.
+		targetDir, err := directionOf(target)
+		if err != nil {
+			return nil, err
+		}
+		if err := b.buildMessage(child, target, targetDir); err != nil {
 			return nil, err
 		}
 		// A bare $ref has no type (notNull); a sibling "type" may relax it to
 		// nullable, e.g. {"type":["object","null"],"$ref":...}.
 		return objectField(jsonName, child, required, !s.IsNullable()), nil
 	}
-	return b.buildField(msgName, jsonName, target, required)
+	return b.buildField(msgName, jsonName, target, required, dir)
 }
 
 // objectField builds a types.Object[Child,*Child] field. It always validates: the
@@ -426,18 +493,13 @@ func buildScalarField(jsonName string, s *schema.Schema, required bool) (*Field,
 			expr += fi.method
 			f.Imports = fi.imports
 		}
-	case "integer":
-		f.ModelType = "types.Int64"
+	case "integer", "number":
+		goType := numericGoType(s.Type.Primary(), s.Format)
+		f.ModelType = "types." + numericAlias[goType]
 		f.ByPointer = true
-		f.ValidatorType = "*validation.Number[int64]"
-		f.ResultType = "int64"
-		expr, err = numberExpr("int64", jsonName, required, notNull, s)
-	case "number":
-		f.ModelType = "types.Float64"
-		f.ByPointer = true
-		f.ValidatorType = "*validation.Number[float64]"
-		f.ResultType = "float64"
-		expr, err = numberExpr("float64", jsonName, required, notNull, s)
+		f.ValidatorType = "*validation.Number[" + goType + "]"
+		f.ResultType = goType
+		expr, err = numberExpr(goType, jsonName, required, notNull, s)
 	case "boolean":
 		f.ModelType = "types.Boolean"
 		f.ValidatorType = "*validation.Boolean"
@@ -611,21 +673,26 @@ func goString(m json.RawMessage) (string, error) {
 }
 
 // goNumber renders a JSON number as a Go literal of the target numeric type. A
-// float64 literal is emitted verbatim; an int64 literal is normalized and range-
-// checked (see goInt).
+// float literal is emitted verbatim (JSON number syntax is a subset of Go's float
+// literal syntax); an integer literal is normalized and range-checked (see goInt).
 func goNumber(goType string, m json.RawMessage) (string, error) {
-	if goType == "int64" {
-		return goInt(m)
+	if isFloatType(goType) {
+		return raw(m), nil
 	}
-	return raw(m), nil
+	return goInt(goType, m)
 }
 
-// goInt renders a JSON number as a Go int64 literal. An integer value is emitted
-// exactly (preserving magnitudes beyond float64 precision); a value written in
-// float syntax is accepted only when it is integral and in range (e.g. 1e3 -> 1000).
-// A fractional or out-of-range bound cannot be represented by an int64 field and is
-// reported as an error rather than emitted as code that will not compile.
-func goInt(m json.RawMessage) (string, error) {
+func isFloatType(goType string) bool {
+	return goType == "float32" || goType == "float64"
+}
+
+// goInt renders a JSON number as a Go literal of the integer type goType. An integer
+// value is emitted exactly (preserving magnitudes beyond float64 precision); a value
+// written in float syntax is accepted only when it is integral (e.g. 1e3 -> 1000). A
+// fractional value, or one outside goType's range (including a negative on an
+// unsigned type), cannot be represented by the field and is an error rather than code
+// that will not compile.
+func goInt(goType string, m json.RawMessage) (string, error) {
 	lit := raw(m)
 	r, ok := new(big.Rat).SetString(lit)
 	if !ok {
@@ -634,10 +701,78 @@ func goInt(m json.RawMessage) (string, error) {
 	if !r.IsInt() {
 		return "", fmt.Errorf("non-integer bound %q on an integer field", lit)
 	}
-	if n := r.Num(); n.IsInt64() {
-		return n.String(), nil
+	n := r.Num()
+	lo, hi := intBounds(goType)
+	if n.Cmp(lo) < 0 || n.Cmp(hi) > 0 {
+		return "", fmt.Errorf("bound %q out of range for %s", lit, goType)
 	}
-	return "", fmt.Errorf("bound %q out of range for an int64 field", lit)
+	return n.String(), nil
+}
+
+// intBounds returns the inclusive [min, max] range of the integer type goType. The
+// platform-width int/uint are treated as 64-bit.
+func intBounds(goType string) (min, max *big.Int) {
+	bits := intBits(goType)
+	one := big.NewInt(1)
+	if strings.HasPrefix(goType, "uint") {
+		max = new(big.Int).Sub(new(big.Int).Lsh(one, uint(bits)), one)
+		return big.NewInt(0), max
+	}
+	max = new(big.Int).Sub(new(big.Int).Lsh(one, uint(bits-1)), one)
+	min = new(big.Int).Neg(new(big.Int).Lsh(one, uint(bits-1)))
+	return min, max
+}
+
+func intBits(goType string) int {
+	switch goType {
+	case "int8", "uint8":
+		return 8
+	case "int16", "uint16":
+		return 16
+	case "int32", "uint32":
+		return 32
+	default: // int, int64, uint, uint64
+		return 64
+	}
+}
+
+// intFormats/floatFormats map an OpenAPI/JSON Schema numeric "format" to a Go type.
+// Both OpenAPI names (int32/int64/float/double) and Go names (uint32/float32/...) are
+// accepted; an unrecognized format falls back to the default width (JSON Schema
+// treats format as an annotation, so it must not fail).
+var intFormats = map[string]string{
+	"int": "int", "int8": "int8", "int16": "int16", "int32": "int32", "int64": "int64",
+	"uint": "uint", "uint8": "uint8", "uint16": "uint16", "uint32": "uint32", "uint64": "uint64",
+}
+
+var floatFormats = map[string]string{
+	"float": "float32", "double": "float64", "float32": "float32", "float64": "float64",
+}
+
+// numericAlias maps a Go numeric type to its esdigo model/validator wrapper alias
+// (types.<alias>, types.<alias>Array), e.g. "int32" -> "Int32", "uint" -> "UInt".
+var numericAlias = map[string]string{
+	"int": "Int", "int8": "Int8", "int16": "Int16", "int32": "Int32", "int64": "Int64",
+	"uint": "UInt", "uint8": "UInt8", "uint16": "UInt16", "uint32": "UInt32", "uint64": "UInt64",
+	"float32": "Float32", "float64": "Float64",
+}
+
+// numericGoType resolves an integer/number schema to its Go value type, honoring a
+// recognized format and defaulting to int64/float64.
+func numericGoType(kind, format string) string {
+	switch kind {
+	case "integer":
+		if t, ok := intFormats[format]; ok {
+			return t
+		}
+		return "int64"
+	case "number":
+		if t, ok := floatFormats[format]; ok {
+			return t
+		}
+		return "float64"
+	}
+	return ""
 }
 
 // joinStrings renders JSON string values as a comma-separated list of Go string
@@ -675,47 +810,30 @@ func doc(s *schema.Schema) string {
 	return s.Description
 }
 
-func buildImports(extra map[string]bool) []string {
-	// Every generated message carries a validator (with an object-level Result), so
-	// validation is always imported alongside json and types.
-	set := map[string]bool{
-		"github.com/binadel/esdigo/json":       true,
-		"github.com/binadel/esdigo/json/types": true,
-		"github.com/binadel/esdigo/validation": true,
-	}
-	for imp := range extra {
-		set[imp] = true
-	}
-	list := make([]string, 0, len(set))
-	for imp := range set {
-		list = append(list, imp)
-	}
-	sort.Strings(list)
-	return list
-}
-
-// messageImports is the import set for a single message emitted on its own file.
-// json (marshal/read) and validation (the validator + object-level Result) are
-// always used; types only when the struct has fields (its wrappers, incl.
-// types.Object for nested refs); plus each field's result-type imports. References
-// to sibling types live in the same package, so they need no import.
+// messageImports is the import set for a single message, honoring its direction; the
+// combined file's imports are the union of these across messages. json (marshal/read)
+// is always used, and json/types whenever the struct has fields (its wrappers, incl.
+// types.Object for nested refs). The validator and its field result-type imports are
+// used only when the message emits validators — an out-only, write-only type needs
+// neither. References to sibling types live in the same package, so they need no
+// import.
 func messageImports(m *Message) []string {
-	extra := map[string]bool{}
+	set := map[string]bool{"github.com/binadel/esdigo/json": true}
 	if len(m.Fields) > 0 {
-		extra["github.com/binadel/esdigo/json/types"] = true
+		set["github.com/binadel/esdigo/json/types"] = true
 	}
-	for _, f := range m.Fields {
-		for _, imp := range f.Imports {
-			extra[imp] = true
+	if m.Direction.EmitsValidator() {
+		set["github.com/binadel/esdigo/validation"] = true
+		for _, f := range m.Fields {
+			for _, imp := range f.Imports {
+				set[imp] = true
+			}
 		}
 	}
-	set := map[string]bool{
-		"github.com/binadel/esdigo/json":       true,
-		"github.com/binadel/esdigo/validation": true,
-	}
-	for imp := range extra {
-		set[imp] = true
-	}
+	return sortedImports(set)
+}
+
+func sortedImports(set map[string]bool) []string {
 	list := make([]string, 0, len(set))
 	for imp := range set {
 		list = append(list, imp)

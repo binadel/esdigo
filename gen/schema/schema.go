@@ -37,6 +37,11 @@ type Schema struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 
+	// x-esdigo-io flags which generated code this (object) type needs: "in"
+	// (reader + validators), "out" (marshal + writer, no validators), or "" / "both"
+	// (everything). See gen/ir.Direction.
+	IO string `json:"x-esdigo-io"`
+
 	// nullability: OpenAPI 3.0 uses this keyword; JSON Schema 2020-12 / OpenAPI 3.1
 	// use type: [..., "null"] instead. Either marks the value nullable.
 	Nullable bool `json:"nullable"`

@@ -129,6 +129,20 @@ result:
 | `regex` | `*validation.Regex` | `*regexp.Regexp` |
 | `hostname` / `json-pointer` | `*validation.Hostname` / `JsonPointer` | `string` |
 
+An `integer` or `number` with a **`format`** selects a wider Go backing type — the
+model wrapper, its validator, and (for scalar arrays) the specialized array all
+follow:
+
+| Schema type | format | Go type | model wrapper |
+|---|---|---|---|
+| `integer` | `int32` / `int64` (OpenAPI), or `int8`…`uint64` / `int` / `uint` | `int32`, `uint16`, … | `types.Int32`, `types.UInt16`, … (`…Array` for arrays) |
+| `number` | `float` / `float32` | `float32` | `types.Float32` |
+| `number` | `double` / `float64` | `float64` | `types.Float64` |
+
+The default is `int64` / `float64`. A `minimum`/`maximum`/`enum`/`const` that does not
+fit the chosen integer type (out of range, or negative on an unsigned type) is a
+generation error rather than code that won't compile.
+
 Unknown formats are ignored (JSON Schema treats `format` as an annotation).
 
 ## Constraints
@@ -154,6 +168,28 @@ esdigo models a field as three independent states — **present**, **defined**
   presence).
 - Nullable — either `type: ["string", "null"]` (JSON Schema / OpenAPI 3.1) or
   `"nullable": true` (OpenAPI 3.0) — omits `.NotNull()`.
+
+## Direction (inbound / outbound)
+
+Flag a type with the **`x-esdigo-io`** extension to generate only the code it needs:
+
+| `x-esdigo-io` | Generated |
+|---|---|
+| `both` (default, or omitted) | struct + marshal/write + unmarshal/read + validators |
+| `out` | struct + `MarshalJSON` / `WriteJSON` only — a value you only produce (e.g. a response): no reader, no validators |
+| `in` | struct + `UnmarshalJSON` / `ReadJSON` + validators — a value you only receive (e.g. a request): no writer |
+
+```yaml
+components:
+  schemas:
+    AssetResponse:
+      x-esdigo-io: out      # write-only, no validators
+      type: object
+```
+
+An inline nested object inherits its parent's direction. A shared `$ref` target keeps
+its own flag (default `both`), so it stays usable from both inbound and outbound
+parents; if you narrow a shared type, make sure every referrer is compatible.
 
 ## Notes and limitations
 

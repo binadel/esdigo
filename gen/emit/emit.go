@@ -115,10 +115,24 @@ func emitMessage(b *bytes.Buffer, m *ir.Message) {
 	recv := strings.ToLower(m.Name[:1])
 
 	emitStruct(b, m)
-	emitMarshal(b, m, recv)
-	emitWriteJSON(b, m, recv)
-	emitReadJSON(b, m, recv)
-	emitValidator(b, m, recv)
+	// Order matches the all-directions (Both) output: marshal, unmarshal, write,
+	// read, then validators. An out-only type emits just the writer side, an in-only
+	// type just the reader side and validators.
+	if m.Direction.EmitsWriter() {
+		emitMarshalJSON(b, m, recv)
+	}
+	if m.Direction.EmitsReader() {
+		emitUnmarshalJSON(b, m, recv)
+	}
+	if m.Direction.EmitsWriter() {
+		emitWriteJSON(b, m, recv)
+	}
+	if m.Direction.EmitsReader() {
+		emitReadJSON(b, m, recv)
+	}
+	if m.Direction.EmitsValidator() {
+		emitValidator(b, m, recv)
+	}
 }
 
 func emitStruct(b *bytes.Buffer, m *ir.Message) {
@@ -135,12 +149,14 @@ func emitStruct(b *bytes.Buffer, m *ir.Message) {
 	b.WriteString("}\n\n")
 }
 
-func emitMarshal(b *bytes.Buffer, m *ir.Message, recv string) {
+func emitMarshalJSON(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "func (%s *%s) MarshalJSON() ([]byte, error) {\n", recv, m.Name)
 	b.WriteString("\tw := json.NewWriter(128)\n")
 	fmt.Fprintf(b, "\t%s.WriteJSON(w)\n", recv)
 	b.WriteString("\treturn w.Build()\n}\n\n")
+}
 
+func emitUnmarshalJSON(b *bytes.Buffer, m *ir.Message, recv string) {
 	fmt.Fprintf(b, "func (%s *%s) UnmarshalJSON(data []byte) error {\n", recv, m.Name)
 	b.WriteString("\tr := json.NewReader(data)\n")
 	fmt.Fprintf(b, "\t%s.ReadJSON(r)\n", recv)
