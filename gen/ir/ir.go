@@ -1260,9 +1260,9 @@ func joinNumbers(goType string, values []json.RawMessage) (string, error) {
 
 func doc(s *schema.Schema) string {
 	if s.Title != "" {
-		return s.Title
+		return strings.TrimSpace(s.Title)
 	}
-	return s.Description
+	return strings.TrimSpace(s.Description)
 }
 
 // messageImports is the import set for a single message. The combined file's imports
